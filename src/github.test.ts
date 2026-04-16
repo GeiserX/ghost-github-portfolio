@@ -280,7 +280,7 @@ describe("detectBanner", () => {
   });
 
   it("returns null when no banner found", async () => {
-    mockFetch.mockResolvedValue({ ok: false, headers: new Headers() });
+    mockFetch.mockResolvedValue({ ok: false, status: 404, headers: new Headers() });
 
     const { detectBanner } = await importModule();
     const result = await detectBanner(makeRepo(), makeConfig());

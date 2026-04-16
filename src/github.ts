@@ -99,41 +99,44 @@ export async function detectBanner(
 ): Promise<string | null> {
   if (!config.portfolio.showBanner) return null;
 
-  const { username } = config.github;
-  const branch = repo.default_branch;
+  try {
+    const { username } = config.github;
+    const branch = repo.default_branch;
 
-  // Config override for this specific repo
-  const overridePath =
-    config.portfolio.repos[repo.name]?.bannerPath ??
-    config.portfolio.bannerPaths[repo.name];
+    // Config override for this specific repo
+    const overridePath =
+      config.portfolio.repos[repo.name]?.bannerPath ??
+      config.portfolio.bannerPaths[repo.name];
 
-  if (overridePath) {
-    const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${overridePath}`;
-    if (await urlExists(url)) return url;
+    if (overridePath) {
+      const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${overridePath}`;
+      if (await urlExists(url)) return url;
+    }
+
+    // Try default path
+    const defaultUrl = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${config.portfolio.defaultBannerPath}`;
+    if (await urlExists(defaultUrl)) return defaultUrl;
+
+    // Try candidates
+    for (const candidate of BANNER_CANDIDATES) {
+      if (candidate === config.portfolio.defaultBannerPath) continue;
+      const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${candidate}`;
+      if (await urlExists(url)) return url;
+    }
+
+    return null;
+  } catch {
+    // Banner detection is non-critical; skip banner on persistent errors
+    return null;
   }
-
-  // Try default path
-  const defaultUrl = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${config.portfolio.defaultBannerPath}`;
-  if (await urlExists(defaultUrl)) return defaultUrl;
-
-  // Try candidates
-  for (const candidate of BANNER_CANDIDATES) {
-    if (candidate === config.portfolio.defaultBannerPath) continue;
-    const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${candidate}`;
-    if (await urlExists(url)) return url;
-  }
-
-  return null;
 }
 
 async function urlExists(url: string): Promise<boolean> {
-  try {
-    const res = await fetchWithRetry(url, {
-      method: "HEAD",
-      redirect: "follow",
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const res = await fetchWithRetry(url, {
+    method: "HEAD",
+    redirect: "follow",
+  });
+  if (res.ok) return true;
+  if (res.status === 404) return false;
+  throw new Error(`Banner check failed for ${url}: HTTP ${res.status}`);
 }

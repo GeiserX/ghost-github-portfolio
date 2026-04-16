@@ -26,7 +26,7 @@ inputs:
   min-stars:
     description: "Minimum stars to include a repo"
     required: false
-    default: "2"
+    default: ""
 
 runs:
   using: "composite"
@@ -46,55 +46,42 @@ runs:
     - name: Generate config overrides
       shell: bash
       id: config
+      working-directory: ${{ github.action_path }}
+      env:
+        GGP_CONFIG: ${{ github.workspace }}/${{ inputs.config-path }}
+        GGP_GHOST_URL: ${{ inputs.ghost-url }}
+        GGP_GHOST_PAGE_SLUG: ${{ inputs.ghost-page-slug }}
+        GGP_GITHUB_USERNAME: ${{ inputs.github-username }}
+        GGP_MIN_STARS: ${{ inputs.min-stars }}
       run: |
-        CONFIG="${{ inputs.config-path }}"
-        if [ -n "${{ inputs.ghost-url }}" ] || [ -n "${{ inputs.ghost-page-slug }}" ] || [ -n "${{ inputs.github-username }}" ] || [ -n "${{ inputs.min-stars }}" ]; then
+        CONFIG="$GGP_CONFIG"
+        if [ -n "$GGP_GHOST_URL" ] || [ -n "$GGP_GHOST_PAGE_SLUG" ] || [ -n "$GGP_GITHUB_USERNAME" ] || [ -n "$GGP_MIN_STARS" ]; then
           cp "$CONFIG" /tmp/ggp-config.yml
           CONFIG=/tmp/ggp-config.yml
-          if [ -n "${{ inputs.ghost-url }}" ]; then
-            echo "Overriding ghost.url"
-            node -e "
-              const fs = require('fs');
-              const yaml = require('yaml');
-              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+          node -e '
+            const fs = require("fs");
+            const yaml = require("yaml");
+            const c = yaml.parse(fs.readFileSync(process.env.GGP_CONFIG, "utf8")) || {};
+            if (process.env.GGP_GHOST_URL) {
               c.ghost = c.ghost || {};
-              c.ghost.url = '${{ inputs.ghost-url }}';
-              fs.writeFileSync('$CONFIG', yaml.stringify(c));
-            "
-          fi
-          if [ -n "${{ inputs.ghost-page-slug }}" ]; then
-            echo "Overriding ghost.pageSlug"
-            node -e "
-              const fs = require('fs');
-              const yaml = require('yaml');
-              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+              c.ghost.url = process.env.GGP_GHOST_URL;
+            }
+            if (process.env.GGP_GHOST_PAGE_SLUG) {
               c.ghost = c.ghost || {};
-              c.ghost.pageSlug = '${{ inputs.ghost-page-slug }}';
-              fs.writeFileSync('$CONFIG', yaml.stringify(c));
-            "
-          fi
-          if [ -n "${{ inputs.github-username }}" ]; then
-            echo "Overriding github.username"
-            node -e "
-              const fs = require('fs');
-              const yaml = require('yaml');
-              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+              c.ghost.pageSlug = process.env.GGP_GHOST_PAGE_SLUG;
+            }
+            if (process.env.GGP_GITHUB_USERNAME) {
               c.github = c.github || {};
-              c.github.username = '${{ inputs.github-username }}';
-              fs.writeFileSync('$CONFIG', yaml.stringify(c));
-            "
-          fi
-          if [ -n "${{ inputs.min-stars }}" ]; then
-            echo "Overriding portfolio.minStars"
-            node -e "
-              const fs = require('fs');
-              const yaml = require('yaml');
-              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+              c.github.username = process.env.GGP_GITHUB_USERNAME;
+            }
+            if (process.env.GGP_MIN_STARS) {
+              const n = Number.parseInt(process.env.GGP_MIN_STARS, 10);
+              if (!Number.isFinite(n)) throw new Error("min-stars must be an integer");
               c.portfolio = c.portfolio || {};
-              c.portfolio.minStars = parseInt('${{ inputs.min-stars }}');
-              fs.writeFileSync('$CONFIG', yaml.stringify(c));
-            "
-          fi
+              c.portfolio.minStars = n;
+            }
+            fs.writeFileSync("/tmp/ggp-config.yml", yaml.stringify(c));
+          '
         fi
         echo "config=$CONFIG" >> "$GITHUB_OUTPUT"
 

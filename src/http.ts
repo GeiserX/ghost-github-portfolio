@@ -14,9 +14,27 @@ export async function fetchWithRetry(
 ): Promise<Response> {
   const maxRetries = opts?.maxRetries ?? MAX_RETRIES;
   const baseDelay = opts?.baseDelay ?? BASE_DELAY_MS;
+  let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(url, init);
+    let res: Response;
+    try {
+      res = await fetch(url, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxRetries) break;
+
+      const delay = baseDelay * Math.pow(2, attempt);
+      const message =
+        error instanceof Error ? error.message : String(error);
+      opts?.onRetry?.(
+        attempt + 1,
+        delay,
+        `Network error: ${message}. Retrying in ${delay}ms`,
+      );
+      await sleep(delay);
+      continue;
+    }
 
     // Rate limit handling (GitHub API)
     if (res.status === 403 || res.status === 429) {
@@ -55,8 +73,11 @@ export async function fetchWithRetry(
     return res;
   }
 
-  // Unreachable, but TypeScript needs it
-  throw new Error(`Failed after ${maxRetries} retries`);
+  const message =
+    lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(
+    `Request to ${url} failed after ${maxRetries + 1} attempts: ${message}`,
+  );
 }
 
 export function parseRateLimitHeaders(res: Response): RateLimitInfo | null {

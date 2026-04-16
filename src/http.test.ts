@@ -97,6 +97,35 @@ describe("fetchWithRetry", () => {
     expect(onRetry.mock.calls[0][2]).toContain("Rate limited");
   });
 
+  it("retries on network errors (fetch rejection)", async () => {
+    mockFetch
+      .mockRejectedValueOnce(new Error("ECONNRESET"))
+      .mockRejectedValueOnce(new Error("ETIMEDOUT"))
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+
+    const onRetry = vi.fn();
+    const res = await fetchWithRetry(
+      "https://example.com",
+      {},
+      { maxRetries: 3, baseDelay: 1, onRetry },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(onRetry).toHaveBeenCalledTimes(2);
+    expect(onRetry.mock.calls[0][2]).toContain("Network error");
+  });
+
+  it("throws descriptive error when network errors exhaust retries", async () => {
+    mockFetch.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await expect(
+      fetchWithRetry("https://example.com", {}, { maxRetries: 2, baseDelay: 1 }),
+    ).rejects.toThrow("Request to https://example.com failed after 3 attempts: ECONNREFUSED");
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
   it("passes through request init options", async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
 
