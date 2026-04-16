@@ -34,6 +34,7 @@ export interface FooterConfig {
 export interface RepoOverride {
   bannerPath?: string;
   description?: string;
+  personalNote?: string;
   dockerImage?: string;
   badges?: CustomBadge[];
   keyFeatures?: string[];

@@ -1,4 +1,4 @@
-import type { Config, GitHubRepo } from "./types.js";
+import type { Config, GitHubRepo, RepoOverride } from "./types.js";
 import {
   fetchWithRetry,
   parseRateLimitHeaders,
@@ -127,6 +127,41 @@ export async function detectBanner(
     return null;
   } catch {
     // Banner detection is non-critical; skip banner on persistent errors
+    return null;
+  }
+}
+
+const PORTFOLIO_CONFIG_FILE = ".ghost-portfolio.yml";
+
+export async function fetchPortfolioConfig(
+  repo: GitHubRepo,
+  config: Config,
+): Promise<RepoOverride | null> {
+  const { username } = config.github;
+  const branch = repo.default_branch;
+  const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${PORTFOLIO_CONFIG_FILE}`;
+
+  try {
+    const res = await fetchWithRetry(url, { redirect: "follow" });
+    if (!res.ok) return null;
+
+    const text = await res.text();
+    // Dynamic import to avoid adding yaml as a runtime dep for github.ts
+    // yaml is already a project dependency
+    const { parse } = await import("yaml");
+    const data = parse(text);
+    if (!data || typeof data !== "object") return null;
+
+    return {
+      description: data.description ?? undefined,
+      personalNote: data.personalNote ?? undefined,
+      dockerImage: data.dockerImage ?? undefined,
+      keyFeatures: Array.isArray(data.keyFeatures) ? data.keyFeatures : undefined,
+      techStack: data.techStack ?? undefined,
+      badges: Array.isArray(data.badges) ? data.badges : undefined,
+      bannerPath: data.bannerPath ?? undefined,
+    } satisfies RepoOverride;
+  } catch {
     return null;
   }
 }

@@ -148,6 +148,11 @@ export function generateCard(
     parts.push(`<p><em>${escapeHtml(description)}</em></p>`);
   }
 
+  // Personal note
+  if (overrides?.personalNote) {
+    parts.push(`<p>${escapeHtml(overrides.personalNote)}</p>`);
+  }
+
   // Key features (from config only)
   if (overrides?.keyFeatures?.length) {
     parts.push(`<p><strong>Key Features:</strong></p>`);

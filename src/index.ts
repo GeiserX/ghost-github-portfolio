@@ -3,7 +3,7 @@
 import { Command } from "commander";
 import { writeFileSync } from "node:fs";
 import { loadConfig, generateExampleConfig } from "./config.js";
-import { fetchRepos, detectBanner } from "./github.js";
+import { fetchRepos, detectBanner, fetchPortfolioConfig } from "./github.js";
 import { fetchPage, updatePage } from "./ghost.js";
 import { generateCard, generateFooter, buildLexical } from "./generator.js";
 
@@ -55,6 +55,25 @@ program
             );
           }
           return { repo, banner };
+        }),
+      );
+
+      // Fetch per-repo portfolio configs (.ghost-portfolio.yml)
+      if (verbose) console.log("Fetching portfolio configs...");
+      await Promise.all(
+        repos.map(async (repo) => {
+          const portfolioConfig = await fetchPortfolioConfig(repo, config);
+          if (portfolioConfig) {
+            // Merge: per-repo file provides defaults, config.yml overrides
+            const existing = config.portfolio.repos[repo.name] ?? {};
+            config.portfolio.repos[repo.name] = {
+              ...portfolioConfig,
+              ...Object.fromEntries(
+                Object.entries(existing).filter(([, v]) => v !== undefined),
+              ),
+            };
+            if (verbose) console.log(`  ${repo.name}: loaded .ghost-portfolio.yml`);
+          }
         }),
       );
 
