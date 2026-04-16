@@ -78,6 +78,10 @@ export async function fetchRepos(
     .filter((r) => includeForked || !r.fork)
     .filter((r) => !excludeSet.has(r.name.toLowerCase()))
     .filter((r) => !config.portfolio.repos[r.name]?.exclude)
+    .filter((r) => {
+      if (!config.portfolio.excludeAwesomeLists) return true;
+      return !r.name.toLowerCase().startsWith("awesome") && !r.topics.includes("awesome-list");
+    })
     .sort((a, b) => b.stargazers_count - a.stargazers_count)
     .slice(0, maxRepos);
 }

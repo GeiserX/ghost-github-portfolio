@@ -17,6 +17,7 @@ export interface PortfolioConfig {
   maxRepos: number;
   excludeRepos: string[];
   includeForked: boolean;
+  excludeAwesomeLists: boolean;
   badgeStyle: string;
   showBanner: boolean;
   centerContent: boolean;

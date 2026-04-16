@@ -7,6 +7,7 @@ const DEFAULT_PORTFOLIO: PortfolioConfig = {
   maxRepos: 50,
   excludeRepos: [],
   includeForked: false,
+  excludeAwesomeLists: false,
   badgeStyle: "for-the-badge",
   showBanner: true,
   centerContent: true,
@@ -83,6 +84,7 @@ portfolio:
   minStars: 2          # Only show repos with at least this many stars
   maxRepos: 50         # Maximum number of repos to display
   includeForked: false # Skip forked repos
+  excludeAwesomeLists: false # Skip repos starting with "awesome" or tagged "awesome-list"
   badgeStyle: for-the-badge  # shields.io style: flat, flat-square, for-the-badge, plastic, social
   showBanner: true     # Show repo banner images (SVG/PNG from the repo)
   centerContent: true  # Center project names and badges
