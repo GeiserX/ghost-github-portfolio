@@ -201,6 +201,10 @@ Badges are dynamic (served by shields.io) — stars, forks, and Docker pulls upd
 | Platform | Config | Custom platform badge (macOS, Linux, etc.) |
 | Custom | Config | Any shields.io-compatible badge |
 
+## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full roadmap, including themes, multi-CMS support, AI-powered features, analytics, team portfolios, and more.
+
 ## License
 
 [GPL-3.0](LICENSE)
