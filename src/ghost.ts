@@ -1,7 +1,8 @@
 import { createHmac } from "node:crypto";
 import type { Config, LexicalDocument } from "./types.js";
+import { fetchWithRetry } from "./http.js";
 
-function generateJwt(apiKey: string): string {
+export function generateJwt(apiKey: string): string {
   const [keyId, secretHex] = apiKey.split(":");
   if (!keyId || !secretHex) {
     throw new Error(
@@ -57,7 +58,9 @@ export async function fetchPage(config: Config): Promise<GhostPage> {
     endpoint = `${url}/ghost/api/admin/pages/slug/${pageSlug}/`;
   }
 
-  const res = await fetch(endpoint, { headers: ghostHeaders(adminApiKey) });
+  const res = await fetchWithRetry(endpoint, {
+    headers: ghostHeaders(adminApiKey),
+  });
 
   if (!res.ok) {
     const body = await res.text();
@@ -86,7 +89,7 @@ export async function updatePage(
     ],
   };
 
-  const res = await fetch(endpoint, {
+  const res = await fetchWithRetry(endpoint, {
     method: "PUT",
     headers: ghostHeaders(adminApiKey),
     body: JSON.stringify(body),

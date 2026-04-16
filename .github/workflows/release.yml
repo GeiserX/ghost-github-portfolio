@@ -42,9 +42,7 @@ jobs:
         with:
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: |
-            drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}
-            drumsergio/ghost-github-portfolio:latest
+          tags: drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}
 
   github-release:
     runs-on: ubuntu-latest

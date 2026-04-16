@@ -43,6 +43,61 @@ runs:
         npm ci
         npm run build
 
+    - name: Generate config overrides
+      shell: bash
+      id: config
+      run: |
+        CONFIG="${{ inputs.config-path }}"
+        if [ -n "${{ inputs.ghost-url }}" ] || [ -n "${{ inputs.ghost-page-slug }}" ] || [ -n "${{ inputs.github-username }}" ] || [ -n "${{ inputs.min-stars }}" ]; then
+          cp "$CONFIG" /tmp/ggp-config.yml
+          CONFIG=/tmp/ggp-config.yml
+          if [ -n "${{ inputs.ghost-url }}" ]; then
+            echo "Overriding ghost.url"
+            node -e "
+              const fs = require('fs');
+              const yaml = require('yaml');
+              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+              c.ghost = c.ghost || {};
+              c.ghost.url = '${{ inputs.ghost-url }}';
+              fs.writeFileSync('$CONFIG', yaml.stringify(c));
+            "
+          fi
+          if [ -n "${{ inputs.ghost-page-slug }}" ]; then
+            echo "Overriding ghost.pageSlug"
+            node -e "
+              const fs = require('fs');
+              const yaml = require('yaml');
+              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+              c.ghost = c.ghost || {};
+              c.ghost.pageSlug = '${{ inputs.ghost-page-slug }}';
+              fs.writeFileSync('$CONFIG', yaml.stringify(c));
+            "
+          fi
+          if [ -n "${{ inputs.github-username }}" ]; then
+            echo "Overriding github.username"
+            node -e "
+              const fs = require('fs');
+              const yaml = require('yaml');
+              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+              c.github = c.github || {};
+              c.github.username = '${{ inputs.github-username }}';
+              fs.writeFileSync('$CONFIG', yaml.stringify(c));
+            "
+          fi
+          if [ -n "${{ inputs.min-stars }}" ]; then
+            echo "Overriding portfolio.minStars"
+            node -e "
+              const fs = require('fs');
+              const yaml = require('yaml');
+              const c = yaml.parse(fs.readFileSync('$CONFIG','utf8'));
+              c.portfolio = c.portfolio || {};
+              c.portfolio.minStars = parseInt('${{ inputs.min-stars }}');
+              fs.writeFileSync('$CONFIG', yaml.stringify(c));
+            "
+          fi
+        fi
+        echo "config=$CONFIG" >> "$GITHUB_OUTPUT"
+
     - name: Sync portfolio
       shell: bash
       env:
@@ -50,5 +105,5 @@ runs:
         GHOST_GITHUB_TOKEN: ${{ github.token }}
       run: |
         node ${{ github.action_path }}/dist/index.js sync \
-          --config "${{ inputs.config-path }}" \
+          --config "${{ steps.config.outputs.config }}" \
           --verbose
