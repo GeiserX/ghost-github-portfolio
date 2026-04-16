@@ -14,7 +14,7 @@ program
   .description(
     "Auto-sync GitHub repositories to a Ghost CMS portfolio page. Fetches repos, sorts by stars, generates cards with banners and badges, and updates Ghost via the Admin API.",
   )
-  .version("0.2.0");
+  .version("0.3.0");
 
 program
   .command("sync")
