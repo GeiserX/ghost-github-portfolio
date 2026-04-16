@@ -131,13 +131,13 @@ export function generateCard(
 
   // Title
   parts.push(
-    `<h3${align}><a href="${repo.html_url}" rel="noreferrer">${repo.name}</a></h3>`,
+    `<h2${align}><a href="${repo.html_url}" rel="noreferrer">${repo.name}</a></h2>`,
   );
 
   // Badges
   const badges = buildBadges(repo, config);
   parts.push(
-    `<div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;${flexJustify}">`,
+    `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;${flexJustify}">`,
     `  ${badges.join("\n  ")}`,
     `</div>`,
   );
@@ -145,7 +145,7 @@ export function generateCard(
   // Description
   const description = overrides?.description ?? repo.description;
   if (description) {
-    parts.push(`<p><em>${escapeHtml(description)}</em></p>`);
+    parts.push(`<p style="font-size:1.1em;"><em>${escapeHtml(description)}</em></p>`);
   }
 
   // Personal note
