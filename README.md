@@ -42,7 +42,7 @@ npm install -g ghost-github-portfolio
 npx ghost-github-portfolio
 
 # Docker
-docker pull drumsergio/ghost-github-portfolio:0.2.0
+docker pull drumsergio/ghost-github-portfolio:0.3.0
 ```
 
 ### 2. Create a config
@@ -132,7 +132,7 @@ portfolio:
 ```bash
 docker run --rm \
   -v /path/to/config.yml:/config/config.yml \
-  drumsergio/ghost-github-portfolio:0.2.0
+  drumsergio/ghost-github-portfolio:0.3.0
 ```
 
 ### Docker Compose (daily cron)
@@ -140,7 +140,7 @@ docker run --rm \
 ```yaml
 services:
   ghost-portfolio:
-    image: drumsergio/ghost-github-portfolio:0.2.0
+    image: drumsergio/ghost-github-portfolio:0.3.0
     volumes:
       - ./config.yml:/config/config.yml:ro
     # Run daily at 6 AM via external cron or restart policy
