@@ -26,7 +26,7 @@ inputs:
   min-stars:
     description: "Minimum stars to include a repo"
     required: false
-    default: "2"
+    default: ""
 
 runs:
   using: "composite"
@@ -43,6 +43,48 @@ runs:
         npm ci
         npm run build
 
+    - name: Generate config overrides
+      shell: bash
+      id: config
+      working-directory: ${{ github.action_path }}
+      env:
+        GGP_CONFIG: ${{ github.workspace }}/${{ inputs.config-path }}
+        GGP_GHOST_URL: ${{ inputs.ghost-url }}
+        GGP_GHOST_PAGE_SLUG: ${{ inputs.ghost-page-slug }}
+        GGP_GITHUB_USERNAME: ${{ inputs.github-username }}
+        GGP_MIN_STARS: ${{ inputs.min-stars }}
+      run: |
+        CONFIG="$GGP_CONFIG"
+        if [ -n "$GGP_GHOST_URL" ] || [ -n "$GGP_GHOST_PAGE_SLUG" ] || [ -n "$GGP_GITHUB_USERNAME" ] || [ -n "$GGP_MIN_STARS" ]; then
+          cp "$CONFIG" /tmp/ggp-config.yml
+          CONFIG=/tmp/ggp-config.yml
+          node -e '
+            const fs = require("fs");
+            const yaml = require("yaml");
+            const c = yaml.parse(fs.readFileSync(process.env.GGP_CONFIG, "utf8")) || {};
+            if (process.env.GGP_GHOST_URL) {
+              c.ghost = c.ghost || {};
+              c.ghost.url = process.env.GGP_GHOST_URL;
+            }
+            if (process.env.GGP_GHOST_PAGE_SLUG) {
+              c.ghost = c.ghost || {};
+              c.ghost.pageSlug = process.env.GGP_GHOST_PAGE_SLUG;
+            }
+            if (process.env.GGP_GITHUB_USERNAME) {
+              c.github = c.github || {};
+              c.github.username = process.env.GGP_GITHUB_USERNAME;
+            }
+            if (process.env.GGP_MIN_STARS) {
+              const n = Number.parseInt(process.env.GGP_MIN_STARS, 10);
+              if (!Number.isFinite(n)) throw new Error("min-stars must be an integer");
+              c.portfolio = c.portfolio || {};
+              c.portfolio.minStars = n;
+            }
+            fs.writeFileSync("/tmp/ggp-config.yml", yaml.stringify(c));
+          '
+        fi
+        echo "config=$CONFIG" >> "$GITHUB_OUTPUT"
+
     - name: Sync portfolio
       shell: bash
       env:
@@ -50,5 +92,5 @@ runs:
         GHOST_GITHUB_TOKEN: ${{ github.token }}
       run: |
         node ${{ github.action_path }}/dist/index.js sync \
-          --config "${{ inputs.config-path }}" \
+          --config "${{ steps.config.outputs.config }}" \
           --verbose

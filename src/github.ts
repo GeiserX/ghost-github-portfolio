@@ -1,4 +1,9 @@
 import type { Config, GitHubRepo } from "./types.js";
+import {
+  fetchWithRetry,
+  parseRateLimitHeaders,
+  type RateLimitInfo,
+} from "./http.js";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -11,23 +16,48 @@ function headers(token?: string): Record<string, string> {
   return h;
 }
 
-export async function fetchRepos(config: Config): Promise<GitHubRepo[]> {
+export interface FetchReposResult {
+  repos: GitHubRepo[];
+  rateLimit: RateLimitInfo | null;
+}
+
+export async function fetchRepos(
+  config: Config,
+  verbose = false,
+): Promise<GitHubRepo[]> {
   const { username, token } = config.github;
   const { minStars, maxRepos, excludeRepos, includeForked } = config.portfolio;
 
   const allRepos: GitHubRepo[] = [];
   let page = 1;
   const perPage = 100;
+  let lastRateLimit: RateLimitInfo | null = null;
+
+  const onRetry = verbose
+    ? (_attempt: number, _delay: number, reason: string) =>
+        console.log(`  [retry] ${reason}`)
+    : undefined;
 
   // GitHub REST API /users/{user}/repos does not support sort=stars.
   // Fetch all pages, then sort client-side.
   while (true) {
     const url = `${GITHUB_API}/users/${username}/repos?per_page=${perPage}&page=${page}&type=owner`;
-    const res = await fetch(url, { headers: headers(token) });
+    const res = await fetchWithRetry(
+      url,
+      { headers: headers(token) },
+      { onRetry },
+    );
 
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`GitHub API error ${res.status}: ${body}`);
+    }
+
+    lastRateLimit = parseRateLimitHeaders(res);
+    if (verbose && lastRateLimit) {
+      console.log(
+        `  [rate-limit] ${lastRateLimit.remaining}/${lastRateLimit.limit} remaining (resets ${lastRateLimit.resetAt.toISOString()})`,
+      );
     }
 
     const repos = (await res.json()) as GitHubRepo[];
@@ -69,38 +99,44 @@ export async function detectBanner(
 ): Promise<string | null> {
   if (!config.portfolio.showBanner) return null;
 
-  const { username } = config.github;
-  const branch = repo.default_branch;
+  try {
+    const { username } = config.github;
+    const branch = repo.default_branch;
 
-  // Config override for this specific repo
-  const overridePath =
-    config.portfolio.repos[repo.name]?.bannerPath ??
-    config.portfolio.bannerPaths[repo.name];
+    // Config override for this specific repo
+    const overridePath =
+      config.portfolio.repos[repo.name]?.bannerPath ??
+      config.portfolio.bannerPaths[repo.name];
 
-  if (overridePath) {
-    const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${overridePath}`;
-    if (await urlExists(url)) return url;
+    if (overridePath) {
+      const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${overridePath}`;
+      if (await urlExists(url)) return url;
+    }
+
+    // Try default path
+    const defaultUrl = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${config.portfolio.defaultBannerPath}`;
+    if (await urlExists(defaultUrl)) return defaultUrl;
+
+    // Try candidates
+    for (const candidate of BANNER_CANDIDATES) {
+      if (candidate === config.portfolio.defaultBannerPath) continue;
+      const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${candidate}`;
+      if (await urlExists(url)) return url;
+    }
+
+    return null;
+  } catch {
+    // Banner detection is non-critical; skip banner on persistent errors
+    return null;
   }
-
-  // Try default path
-  const defaultUrl = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${config.portfolio.defaultBannerPath}`;
-  if (await urlExists(defaultUrl)) return defaultUrl;
-
-  // Try candidates
-  for (const candidate of BANNER_CANDIDATES) {
-    if (candidate === config.portfolio.defaultBannerPath) continue;
-    const url = `https://raw.githubusercontent.com/${username}/${repo.name}/${branch}/${candidate}`;
-    if (await urlExists(url)) return url;
-  }
-
-  return null;
 }
 
 async function urlExists(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(url, { method: "HEAD", redirect: "follow" });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const res = await fetchWithRetry(url, {
+    method: "HEAD",
+    redirect: "follow",
+  });
+  if (res.ok) return true;
+  if (res.status === 404) return false;
+  throw new Error(`Banner check failed for ${url}: HTTP ${res.status}`);
 }
