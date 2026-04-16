@@ -230,11 +230,16 @@ export function generateFooter(
     const languages = [
       ...new Set(allRepos.map((r) => r.language).filter(Boolean)),
     ];
-    const focusAreas = [
-      ...new Set(allRepos.flatMap((r) => r.topics).filter(Boolean)),
-    ]
+    const topicCounts = new Map<string, number>();
+    for (const repo of allRepos) {
+      for (const t of repo.topics) {
+        topicCounts.set(t, (topicCounts.get(t) ?? 0) + 1);
+      }
+    }
+    const focusAreas = [...topicCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
-      .map((t) => t.charAt(0).toUpperCase() + t.slice(1));
+      .map(([t]) => t.charAt(0).toUpperCase() + t.slice(1));
 
     const lines: string[] = [];
     lines.push(`<strong>Total Stars:</strong>&nbsp;${totalStars}+`);
