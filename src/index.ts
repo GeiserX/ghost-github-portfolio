@@ -14,7 +14,7 @@ program
   .description(
     "Auto-sync GitHub repositories to a Ghost CMS portfolio page. Fetches repos, sorts by stars, generates cards with banners and badges, and updates Ghost via the Admin API.",
   )
-  .version("0.3.2");
+  .version("0.3.3");
 
 program
   .command("sync")
@@ -34,12 +34,18 @@ program
         console.log(
           `Fetching repos for ${config.github.username} (min ${config.portfolio.minStars} stars)...`,
         );
-      const repos = await fetchRepos(config);
+      const allRepos = await fetchRepos(config);
+
+      // Filter awesome lists for display only (stats use all repos)
+      const displayRepos = config.portfolio.excludeAwesomeLists
+        ? allRepos.filter((r) => !r.name.toLowerCase().startsWith("awesome") && !r.topics.includes("awesome-list"))
+        : allRepos;
+
       console.log(
-        `Found ${repos.length} repos matching criteria (${config.portfolio.minStars}+ stars)`,
+        `Found ${allRepos.length} repos matching criteria (${config.portfolio.minStars}+ stars)${displayRepos.length < allRepos.length ? `, displaying ${displayRepos.length}` : ""}`,
       );
 
-      if (repos.length === 0) {
+      if (displayRepos.length === 0) {
         console.log("No repos found. Check your config.");
         return;
       }
@@ -47,7 +53,7 @@ program
       // Detect banners (parallel)
       if (verbose) console.log("Detecting banner images...");
       const bannerResults = await Promise.all(
-        repos.map(async (repo) => {
+        displayRepos.map(async (repo) => {
           const banner = await detectBanner(repo, config);
           if (verbose) {
             console.log(
@@ -61,7 +67,7 @@ program
       // Fetch per-repo portfolio configs (.ghost-portfolio.yml)
       if (verbose) console.log("Fetching portfolio configs...");
       await Promise.all(
-        repos.map(async (repo) => {
+        displayRepos.map(async (repo) => {
           const portfolioConfig = await fetchPortfolioConfig(repo, config);
           if (portfolioConfig) {
             // Merge: per-repo file provides defaults, config.yml overrides
@@ -82,7 +88,7 @@ program
         generateCard(repo, banner, config),
       );
 
-      const footer = generateFooter(repos, config);
+      const footer = generateFooter(allRepos, config);
       const lexical = buildLexical(cards, footer);
 
       if (opts.json) {
@@ -99,7 +105,7 @@ program
         }
         console.log(`\nTotal cards: ${cards.length}`);
         console.log(
-          `Total stars: ${repos.reduce((s, r) => s + r.stargazers_count, 0)}`,
+          `Total stars: ${displayRepos.reduce((s, r) => s + r.stargazers_count, 0)}`,
         );
 
         // Write to temp file for inspection
@@ -121,9 +127,9 @@ program
       const updated = await updatePage(config, page.id, page.updated_at, lexical);
 
       console.log(`Portfolio updated: ${updated.title}`);
-      console.log(`  ${repos.length} projects displayed`);
+      console.log(`  ${displayRepos.length} projects displayed`);
       console.log(
-        `  ${repos.reduce((s, r) => s + r.stargazers_count, 0)} total stars`,
+        `  ${displayRepos.reduce((s, r) => s + r.stargazers_count, 0)} total stars`,
       );
       console.log(
         `  ${bannerResults.filter((b) => b.banner).length} banners loaded`,

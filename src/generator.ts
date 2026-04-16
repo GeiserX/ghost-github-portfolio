@@ -215,56 +215,48 @@ function inferTechStack(repo: GitHubRepo): string | null {
 }
 
 export function generateFooter(
-  repos: GitHubRepo[],
+  allRepos: GitHubRepo[],
   config: Config,
 ): string | null {
   if (!config.portfolio.footer.showStats && !config.portfolio.footer.showViewAll)
     return null;
 
-  const center = config.portfolio.centerContent;
-  const align = center ? ' style="text-align:center;"' : "";
-  const listStyle = center
-    ? ' style="list-style:none; padding:0; text-align:center;"'
-    : "";
-
   const parts: string[] = [];
-  parts.push(`<h2${align}>GitHub Stats</h2>`);
+  parts.push(`<h2>GitHub Stats</h2>`);
 
   if (config.portfolio.footer.showStats) {
-    const totalStars = repos.reduce((s, r) => s + r.stargazers_count, 0);
-    const totalRepos = repos.length;
+    const totalStars = allRepos.reduce((s, r) => s + r.stargazers_count, 0);
+    const totalRepos = allRepos.length;
     const languages = [
-      ...new Set(repos.map((r) => r.language).filter(Boolean)),
+      ...new Set(allRepos.map((r) => r.language).filter(Boolean)),
     ];
     const focusAreas = [
-      ...new Set(repos.flatMap((r) => r.topics).filter(Boolean)),
+      ...new Set(allRepos.flatMap((r) => r.topics).filter(Boolean)),
     ]
       .slice(0, 8)
       .map((t) => t.charAt(0).toUpperCase() + t.slice(1));
 
-    parts.push(`<ul${listStyle}>`);
     parts.push(
-      `<li><strong>Total Stars (featured):</strong>&nbsp;${totalStars}+</li>`,
+      `<p><strong>Total Stars (featured):</strong>&nbsp;${totalStars}+</p>`,
     );
     parts.push(
-      `<li><strong>Featured Repositories:</strong>&nbsp;${totalRepos}</li>`,
+      `<p><strong>Featured Repositories:</strong>&nbsp;${totalRepos}</p>`,
     );
     if (languages.length > 0) {
       parts.push(
-        `<li><strong>Primary Languages:</strong>&nbsp;${languages.join(", ")}</li>`,
+        `<p><strong>Primary Languages:</strong>&nbsp;${languages.join(", ")}</p>`,
       );
     }
     if (focusAreas.length > 0) {
       parts.push(
-        `<li><strong>Focus Areas:</strong>&nbsp;${focusAreas.join(", ")}</li>`,
+        `<p><strong>Focus Areas:</strong>&nbsp;${focusAreas.join(", ")}</p>`,
       );
     }
-    parts.push(`</ul>`);
   }
 
   if (config.portfolio.footer.showViewAll) {
     parts.push(
-      `<p${align}><a href="https://github.com/${config.github.username}?tab=repositories"><strong>View All Repositories &rarr;</strong></a></p>`,
+      `<p><a href="https://github.com/${config.github.username}?tab=repositories"><strong>View All Repositories &rarr;</strong></a></p>`,
     );
   }
 
