@@ -1,0 +1,54 @@
+name: "Ghost GitHub Portfolio"
+description: "Auto-sync GitHub repositories to a Ghost CMS portfolio page"
+author: "GeiserX"
+
+branding:
+  icon: "layout"
+  color: "purple"
+
+inputs:
+  config-path:
+    description: "Path to the config YAML file"
+    required: false
+    default: "config.yml"
+  ghost-url:
+    description: "Ghost blog URL (overrides config)"
+    required: false
+  ghost-admin-api-key:
+    description: "Ghost Admin API key in KEY_ID:SECRET format"
+    required: false
+  ghost-page-slug:
+    description: "Ghost page slug to update"
+    required: false
+  github-username:
+    description: "GitHub username to fetch repos for"
+    required: false
+  min-stars:
+    description: "Minimum stars to include a repo"
+    required: false
+    default: "2"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Install and build
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci
+        npm run build
+
+    - name: Sync portfolio
+      shell: bash
+      env:
+        GHOST_ADMIN_API_KEY: ${{ inputs.ghost-admin-api-key }}
+        GHOST_GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        node ${{ github.action_path }}/dist/index.js sync \
+          --config "${{ inputs.config-path }}" \
+          --verbose

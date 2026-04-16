@@ -1,0 +1,60 @@
+{
+  "name": "ghost-github-portfolio",
+  "version": "1.0.0",
+  "description": "Auto-sync GitHub repositories to a Ghost CMS portfolio page. Fetches repos, sorts by stars, generates cards with banners and badges, and updates Ghost via the Admin API.",
+  "type": "module",
+  "bin": {
+    "ghost-github-portfolio": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "ghost",
+    "github",
+    "portfolio",
+    "cms",
+    "sync",
+    "auto-update",
+    "badges",
+    "banners",
+    "stars",
+    "developer-portfolio",
+    "ghost-cms",
+    "admin-api",
+    "lexical",
+    "self-hosted"
+  ],
+  "author": "GeiserX",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GeiserX/ghost-github-portfolio.git"
+  },
+  "homepage": "https://github.com/GeiserX/ghost-github-portfolio",
+  "bugs": {
+    "url": "https://github.com/GeiserX/ghost-github-portfolio/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "yaml": "^2.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3"
+  }
+}
