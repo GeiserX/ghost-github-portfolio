@@ -236,22 +236,16 @@ export function generateFooter(
       .slice(0, 8)
       .map((t) => t.charAt(0).toUpperCase() + t.slice(1));
 
-    parts.push(
-      `<p><strong>Total Stars (featured):</strong>&nbsp;${totalStars}+</p>`,
-    );
-    parts.push(
-      `<p><strong>Featured Repositories:</strong>&nbsp;${totalRepos}</p>`,
-    );
+    const lines: string[] = [];
+    lines.push(`<strong>Total Stars:</strong>&nbsp;${totalStars}+`);
+    lines.push(`<strong>Public Repositories:</strong>&nbsp;${totalRepos}`);
     if (languages.length > 0) {
-      parts.push(
-        `<p><strong>Primary Languages:</strong>&nbsp;${languages.join(", ")}</p>`,
-      );
+      lines.push(`<strong>Primary Languages:</strong>&nbsp;${languages.join(", ")}`);
     }
     if (focusAreas.length > 0) {
-      parts.push(
-        `<p><strong>Focus Areas:</strong>&nbsp;${focusAreas.join(", ")}</p>`,
-      );
+      lines.push(`<strong>Focus Areas:</strong>&nbsp;${focusAreas.join(", ")}`);
     }
+    parts.push(`<p>${lines.join("<br>")}</p>`);
   }
 
   if (config.portfolio.footer.showViewAll) {
