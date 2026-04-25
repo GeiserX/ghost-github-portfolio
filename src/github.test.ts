@@ -287,4 +287,207 @@ describe("detectBanner", () => {
 
     expect(result).toBeNull();
   });
+
+  it("tries candidate paths when override and default fail", async () => {
+    // Override path fails, default fails, then a candidate succeeds
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 404, headers: new Headers() }) // override
+      .mockResolvedValueOnce({ ok: false, status: 404, headers: new Headers() }) // default
+      .mockResolvedValueOnce({ ok: false, status: 404, headers: new Headers() }) // skip default in candidates
+      .mockResolvedValueOnce({ ok: true, headers: new Headers() }); // docs/images/banner.png
+
+    const { detectBanner } = await importModule();
+    const config = makeConfig({
+      portfolio: {
+        ...makeConfig().portfolio,
+        repos: { "test-repo": { bannerPath: "custom/missing.svg" } },
+      },
+    });
+    const result = await detectBanner(makeRepo(), config);
+
+    expect(result).not.toBeNull();
+  });
+
+  it("returns null on persistent error (catch block)", async () => {
+    // Return a response where accessing .ok throws, triggering the catch in detectBanner
+    mockFetch.mockResolvedValue({
+      get ok() { throw new Error("Unexpected network failure"); },
+      status: 0,
+      headers: new Headers(),
+    });
+
+    const { detectBanner } = await importModule();
+    const result = await detectBanner(makeRepo(), makeConfig());
+
+    expect(result).toBeNull();
+  });
+
+  it("returns override URL when override path exists but bannerPaths does not", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404, headers: new Headers() }); // override fails
+    mockFetch.mockResolvedValueOnce({ ok: true, headers: new Headers() }); // default succeeds
+
+    const { detectBanner } = await importModule();
+    const config = makeConfig({
+      portfolio: {
+        ...makeConfig().portfolio,
+        repos: { "test-repo": { bannerPath: "nonexistent.png" } },
+      },
+    });
+    const result = await detectBanner(makeRepo(), config);
+
+    expect(result).toContain("docs/images/banner.svg"); // falls back to default
+  });
+});
+
+describe("fetchPortfolioConfig", () => {
+  async function importModule() {
+    const mod = await import("./github.js");
+    return mod;
+  }
+
+  it("returns parsed config from .ghost-portfolio.yml", async () => {
+    const yamlContent = `
+description: "Custom description"
+personalNote: "A note"
+dockerImage: "user/image"
+keyFeatures:
+  - Feature 1
+  - Feature 2
+techStack: "Python, Docker"
+bannerPath: "assets/banner.svg"
+badges:
+  - type: custom
+    label: MCP
+`;
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => yamlContent,
+    });
+
+    const { fetchPortfolioConfig } = await importModule();
+    const result = await fetchPortfolioConfig(makeRepo(), makeConfig());
+
+    expect(result).not.toBeNull();
+    expect(result!.description).toBe("Custom description");
+    expect(result!.personalNote).toBe("A note");
+    expect(result!.dockerImage).toBe("user/image");
+    expect(result!.keyFeatures).toEqual(["Feature 1", "Feature 2"]);
+    expect(result!.techStack).toBe("Python, Docker");
+    expect(result!.bannerPath).toBe("assets/banner.svg");
+    expect(result!.badges).toHaveLength(1);
+  });
+
+  it("returns null when file does not exist (404)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    });
+
+    const { fetchPortfolioConfig } = await importModule();
+    const result = await fetchPortfolioConfig(makeRepo(), makeConfig());
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null on fetch error", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Network error"));
+
+    const { fetchPortfolioConfig } = await importModule();
+    const result = await fetchPortfolioConfig(makeRepo(), makeConfig());
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when YAML parses to non-object", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => "just a string",
+    });
+
+    const { fetchPortfolioConfig } = await importModule();
+    const result = await fetchPortfolioConfig(makeRepo(), makeConfig());
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when YAML parses to null", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => "",
+    });
+
+    const { fetchPortfolioConfig } = await importModule();
+    const result = await fetchPortfolioConfig(makeRepo(), makeConfig());
+
+    expect(result).toBeNull();
+  });
+
+  it("handles partial config with missing fields", async () => {
+    const yamlContent = `
+description: "Only description"
+`;
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => yamlContent,
+    });
+
+    const { fetchPortfolioConfig } = await importModule();
+    const result = await fetchPortfolioConfig(makeRepo(), makeConfig());
+
+    expect(result).not.toBeNull();
+    expect(result!.description).toBe("Only description");
+    expect(result!.personalNote).toBeUndefined();
+    expect(result!.dockerImage).toBeUndefined();
+    expect(result!.keyFeatures).toBeUndefined();
+  });
+});
+
+describe("fetchRepos verbose mode", () => {
+  async function importModule() {
+    const mod = await import("./github.js");
+    return mod;
+  }
+
+  it("logs rate limit info when verbose", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const resetTime = Math.floor(Date.now() / 1000) + 3600;
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [makeRepo({ stargazers_count: 10 })],
+      headers: new Headers({
+        "x-ratelimit-limit": "60",
+        "x-ratelimit-remaining": "59",
+        "x-ratelimit-reset": String(resetTime),
+      }),
+    });
+
+    const { fetchRepos } = await importModule();
+    await fetchRepos(makeConfig(), true);
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[rate-limit]"),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it("includes forked repos when includeForked is true", async () => {
+    const repos = [
+      makeRepo({ name: "original", fork: false, stargazers_count: 10 }),
+      makeRepo({ name: "forked", fork: true, stargazers_count: 10 }),
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => repos,
+      headers: new Headers(),
+    });
+
+    const { fetchRepos } = await importModule();
+    const config = makeConfig();
+    config.portfolio.includeForked = true;
+    const result = await fetchRepos(config);
+
+    expect(result).toHaveLength(2);
+  });
 });
