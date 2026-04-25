@@ -8,6 +8,7 @@
   <a href="https://github.com/GeiserX/ghost-github-portfolio/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/GeiserX/ghost-github-portfolio/ci.yml?style=flat-square&logo=github&label=CI" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/GeiserX/ghost-github-portfolio?style=flat-square" alt="License"></a>
   <a href="https://github.com/GeiserX/ghost-github-portfolio/stargazers"><img src="https://img.shields.io/github/stars/GeiserX/ghost-github-portfolio?style=flat-square&logo=github" alt="Stars"></a>
+  <a href="https://codecov.io/gh/GeiserX/ghost-github-portfolio"><img src="https://codecov.io/gh/GeiserX/ghost-github-portfolio/graph/badge.svg" alt="codecov"></a>
 </p>
 
 <p align="center"><strong>Auto-sync your GitHub repositories to a Ghost CMS portfolio page.</strong></p>
