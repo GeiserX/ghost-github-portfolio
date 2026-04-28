@@ -1,6 +1,6 @@
-# AGENTS.md - AI Agent Instructions for ghost-github-portfolio
+# CLAUDE.md - AI Agent Instructions for ghost-github-portfolio
 
-> ⚠️ **IMPORTANT**: Do NOT update this file unless the user explicitly says to. Only the user can authorize changes to AGENTS.md.
+> ⚠️ **IMPORTANT**: Do NOT update this file unless the user explicitly says to. Only the user can authorize changes to CLAUDE.md.
 
 > 📦 **RELEASE REMINDER**: npm publishing and Docker push are handled by GitHub Actions on tag push (`v*`). Do NOT run `npm publish` locally. Do NOT create git tags manually. Push a tag and the workflow handles npm + Docker Hub + GitHub Release.
 
