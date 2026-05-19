@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   npm:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -27,7 +27,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
@@ -45,7 +45,7 @@ jobs:
           tags: drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}
 
   github-release:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [npm, docker]
     steps:
       - uses: actions/checkout@v6
