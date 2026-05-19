@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       matrix:
         node-version: [18, 20, 22]
@@ -27,7 +27,7 @@ jobs:
       - run: npm test
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -44,7 +44,7 @@ jobs:
           fail_ci_if_error: true
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
       - name: Build Docker image
