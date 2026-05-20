@@ -13,8 +13,8 @@ jobs:
   npm:
     runs-on: [self-hosted, Linux, X64]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -26,29 +26,65 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  docker:
+  docker-amd64:
     runs-on: [self-hosted, Linux, X64]
     steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           username: drumsergio
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Extract version
-        id: version
+      - id: version
         run: echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@v6
         with:
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}
+          platforms: linux/amd64
+          tags: drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}-amd64
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+  docker-arm64:
+    runs-on: [self-hosted, Linux, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: drumsergio
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          platforms: linux/arm64
+          tags: drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}-arm64
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+  docker-manifest:
+    runs-on: [self-hosted, Linux, X64]
+    needs: [docker-amd64, docker-arm64]
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          username: drumsergio
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+      - run: |
+          docker buildx imagetools create \
+            -t drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }} \
+            drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}-amd64 \
+            drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}-arm64
 
   github-release:
     runs-on: [self-hosted, Linux, X64]
-    needs: [npm, docker]
+    needs: [npm, docker-manifest]
     steps:
-      - uses: actions/checkout@v6
-      - uses: softprops/action-gh-release@v3
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
