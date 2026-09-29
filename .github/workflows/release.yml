@@ -4,16 +4,31 @@ on:
   push:
     tags:
       - "v*"
+  # Re-run a release for an existing tag, e.g. when a publish step failed.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, e.g. v0.4.0
+        required: true
 
 permissions:
   contents: write
   packages: write
 
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
   npm:
     runs-on: ubuntu-latest
+    # npm trusted publishing: GitHub's OIDC token proves who publishes, so no NPM_TOKEN to expire.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -22,23 +37,34 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.
+      - run: npm install -g npm@^11.5.1
+      # Skip a version npm already has, so a manual re-run can finish Docker and the GitHub release.
+      - run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "ghost-github-portfolio@$VERSION" version >/dev/null 2>&1; then
+            echo "ghost-github-portfolio@$VERSION is already on npm, skipping publish"
+          else
+            npm publish --access public --loglevel verbose
+          fi
 
   docker-amd64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
           username: drumsergio
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${TAG#v}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
+          # Build the checked-out tag; the default Git context follows the triggering ref (main on a manual run).
+          context: .
           push: true
           platforms: linux/amd64
           tags: drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}-amd64
@@ -49,15 +75,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
           username: drumsergio
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${TAG#v}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
+          # Build the checked-out tag; the default Git context follows the triggering ref (main on a manual run).
+          context: .
           push: true
           platforms: linux/arm64
           tags: drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }}-arm64
@@ -73,7 +103,7 @@ jobs:
           username: drumsergio
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${TAG#v}" >> "$GITHUB_OUTPUT"
       - run: |
           docker buildx imagetools create \
             -t drumsergio/ghost-github-portfolio:${{ steps.version.outputs.tag }} \
@@ -85,6 +115,9 @@ jobs:
     needs: [npm, docker-manifest]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ env.TAG }}
           generate_release_notes: true

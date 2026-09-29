@@ -65,7 +65,7 @@ Other files:
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `ci.yml` | Push to main, PRs | Build + lint + test on Node 18/20/22; Docker build + verify |
-| `release.yml` | Tag push `v*` | npm publish, Docker multi-arch build (amd64+arm64) to Docker Hub, GitHub Release |
+| `release.yml` | Tag push `v*`, or manual run with an existing tag | npm publish (trusted publishing, no token), Docker multi-arch build (amd64+arm64) to Docker Hub, GitHub Release |
 | `stale.yml` | Daily schedule | Auto-close stale issues (14d stale + 14d close) |
 
 ```bash
@@ -78,7 +78,7 @@ git push origin main --tags
 # release.yml handles: npm publish + Docker push + GH Release
 ```
 
-**NEVER** run `npm publish` locally or create GitHub Releases manually.
+**NEVER** run `npm publish` locally or create GitHub Releases manually. If a release run fails, fix the cause on main and re-run it with `gh workflow run release.yml -f tag=vX.Y.Z`; re-running the failed run reuses the old workflow file.
 
 ## Code Conventions
 
