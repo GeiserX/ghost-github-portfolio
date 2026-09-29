@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from "node:fs";
 
-// Mock all external dependencies before importing
+// Mock the network-facing modules; the generator runs for real.
 vi.mock("./config.js", () => ({
   loadConfig: vi.fn(),
   generateExampleConfig: vi.fn(),
 }));
 
 vi.mock("./github.js", () => ({
-  fetchRepos: vi.fn(),
-  detectBanner: vi.fn(),
+  fetchAllRepos: vi.fn(),
+  selectRepos: vi.fn(),
+  resolveBanner: vi.fn(),
   fetchPortfolioConfig: vi.fn(),
 }));
 
@@ -18,17 +19,11 @@ vi.mock("./ghost.js", () => ({
   updatePage: vi.fn(),
 }));
 
-vi.mock("./generator.js", () => ({
-  generateCard: vi.fn(),
-  generateFooter: vi.fn(),
-  buildLexical: vi.fn(),
-}));
-
 import type { Config, GitHubRepo } from "./types.js";
 
 function makeConfig(): Config {
   return {
-    github: { username: "testuser" },
+    github: { username: "testuser", excludePatterns: [] },
     ghost: {
       url: "https://ghost.example.com",
       adminApiKey: "key:secret",
@@ -36,17 +31,17 @@ function makeConfig(): Config {
     },
     portfolio: {
       minStars: 2,
-      maxRepos: 50,
+      maxRepos: 20,
+      columns: 3,
       excludeRepos: [],
       includeForked: false,
-      excludeAwesomeLists: false,
-      badgeStyle: "for-the-badge",
+      includeArchived: false,
+      excludeAwesomeLists: true,
       showBanner: true,
-      centerContent: true,
       defaultBannerPath: "docs/images/banner.svg",
       bannerPaths: {},
+      intro: "Intro.",
       repos: {},
-      footer: { showStats: true, showViewAll: true },
     },
   };
 }
@@ -61,6 +56,7 @@ function makeRepo(overrides: Partial<GitHubRepo> = {}): GitHubRepo {
     forks_count: 2,
     license: { spdx_id: "GPL-3.0" },
     fork: false,
+    archived: false,
     homepage: null,
     topics: [],
     language: "TypeScript",
@@ -69,19 +65,21 @@ function makeRepo(overrides: Partial<GitHubRepo> = {}): GitHubRepo {
   };
 }
 
+type Mock = ReturnType<typeof vi.fn>;
+
 describe("CLI sync command", () => {
-  let loadConfig: ReturnType<typeof vi.fn>;
-  let fetchRepos: ReturnType<typeof vi.fn>;
-  let detectBanner: ReturnType<typeof vi.fn>;
-  let fetchPortfolioConfig: ReturnType<typeof vi.fn>;
-  let fetchPage: ReturnType<typeof vi.fn>;
-  let updatePage: ReturnType<typeof vi.fn>;
-  let generateCard: ReturnType<typeof vi.fn>;
-  let generateFooter: ReturnType<typeof vi.fn>;
-  let buildLexical: ReturnType<typeof vi.fn>;
+  let loadConfig: Mock;
+  let fetchAllRepos: Mock;
+  let selectRepos: Mock;
+  let resolveBanner: Mock;
+  let fetchPortfolioConfig: Mock;
+  let fetchPage: Mock;
+  let updatePage: Mock;
 
   const tmpConfig = "/tmp/test-cli-config.yml";
+  const htmlOut = "/tmp/test-cli-preview.html";
   let consoleSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
   let originalArgv: string[];
@@ -92,20 +90,21 @@ describe("CLI sync command", () => {
     const configMod = await import("./config.js");
     const githubMod = await import("./github.js");
     const ghostMod = await import("./ghost.js");
-    const generatorMod = await import("./generator.js");
 
-    loadConfig = configMod.loadConfig as ReturnType<typeof vi.fn>;
-    fetchRepos = githubMod.fetchRepos as ReturnType<typeof vi.fn>;
-    detectBanner = githubMod.detectBanner as ReturnType<typeof vi.fn>;
-    fetchPortfolioConfig = githubMod.fetchPortfolioConfig as ReturnType<typeof vi.fn>;
-    fetchPage = ghostMod.fetchPage as ReturnType<typeof vi.fn>;
-    updatePage = ghostMod.updatePage as ReturnType<typeof vi.fn>;
-    generateCard = generatorMod.generateCard as ReturnType<typeof vi.fn>;
-    generateFooter = generatorMod.generateFooter as ReturnType<typeof vi.fn>;
-    buildLexical = generatorMod.buildLexical as ReturnType<typeof vi.fn>;
+    loadConfig = configMod.loadConfig as Mock;
+    fetchAllRepos = githubMod.fetchAllRepos as Mock;
+    selectRepos = githubMod.selectRepos as Mock;
+    resolveBanner = githubMod.resolveBanner as Mock;
+    fetchPortfolioConfig = githubMod.fetchPortfolioConfig as Mock;
+    fetchPage = ghostMod.fetchPage as Mock;
+    updatePage = ghostMod.updatePage as Mock;
+
+    resolveBanner.mockResolvedValue({ url: null, problems: [] });
+    fetchPortfolioConfig.mockResolvedValue(null);
 
     writeFileSync(tmpConfig, "dummy: true");
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
     originalArgv = process.argv;
@@ -113,95 +112,110 @@ describe("CLI sync command", () => {
 
   afterEach(() => {
     process.argv = originalArgv;
-    consoleSpy.mockRestore();
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
-    if (existsSync(tmpConfig)) unlinkSync(tmpConfig);
     vi.restoreAllMocks();
+    for (const f of [tmpConfig, htmlOut]) if (existsSync(f)) unlinkSync(f);
   });
 
   async function runCLI(args: string[]) {
     process.argv = ["node", "index.js", ...args];
     vi.resetModules();
-    // Re-import to trigger commander parse
     await import("./index.js");
-    // Allow any pending async work to complete
     await new Promise((r) => setTimeout(r, 50));
   }
 
-  it("runs sync with --dry-run and outputs preview", async () => {
-    const config = makeConfig();
-    const repos = [makeRepo()];
+  function logged(): string {
+    return consoleSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+  }
 
-    loadConfig.mockReturnValue(config);
-    fetchRepos.mockResolvedValue(repos);
-    detectBanner.mockResolvedValue(null);
-    fetchPortfolioConfig.mockResolvedValue(null);
-    generateCard.mockReturnValue("<h2>test-repo</h2>");
-    generateFooter.mockReturnValue("<h2>Footer</h2>");
-    buildLexical.mockReturnValue({ root: { children: [] } });
+  it("runs a dry run and lists banners and tiles", async () => {
+    const repos = [makeRepo({ name: "a" }), makeRepo({ name: "b" })];
+    loadConfig.mockReturnValue(makeConfig());
+    fetchAllRepos.mockResolvedValue([...repos, makeRepo({ name: "c" })]);
+    selectRepos.mockReturnValue(repos);
+    resolveBanner
+      .mockResolvedValueOnce({ url: "https://x/banner.svg", problems: [] })
+      .mockResolvedValueOnce({ url: null, problems: ["docs/images/banner.svg: missing (HTTP 404)"] });
 
     await runCLI(["sync", "-c", tmpConfig, "--dry-run"]);
 
     expect(loadConfig).toHaveBeenCalledWith(tmpConfig);
-    expect(fetchRepos).toHaveBeenCalled();
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Found 1 repos"));
+    expect(logged()).toContain("Found 3 public repos, showing 2");
+    expect(logged()).toContain("a (10 stars) [banner]");
+    expect(logged()).toContain("b (10 stars) [tile]");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Warning: b gets a name tile: docs/images/banner.svg: missing (HTTP 404)",
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(updatePage).not.toHaveBeenCalled();
+    const card = readFileSync("/tmp/ghost-portfolio-preview.html", "utf-8");
+    expect(card.startsWith("<!--kg-card-begin: html-->")).toBe(true);
+    expect(card.match(/<li class="pf-card">/g)).toHaveLength(2);
   });
 
-  it("runs sync with --json and outputs JSON", async () => {
-    const config = makeConfig();
-    const repos = [makeRepo()];
-    const lexical = { root: { children: [], direction: "ltr", format: "", indent: 0, type: "root", version: 1 } };
-
-    loadConfig.mockReturnValue(config);
-    fetchRepos.mockResolvedValue(repos);
-    detectBanner.mockResolvedValue(null);
-    fetchPortfolioConfig.mockResolvedValue(null);
-    generateCard.mockReturnValue("<h2>test-repo</h2>");
-    generateFooter.mockReturnValue(null);
-    buildLexical.mockReturnValue(lexical);
+  it("prints the lexical JSON with one html card", async () => {
+    loadConfig.mockReturnValue(makeConfig());
+    fetchAllRepos.mockResolvedValue([makeRepo()]);
+    selectRepos.mockReturnValue([makeRepo()]);
 
     await runCLI(["sync", "-c", tmpConfig, "--json"]);
 
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(lexical, null, 2));
+    const out = consoleSpy.mock.calls.map((c) => c[0]).find((s) => String(s).startsWith("{"));
+    const doc = JSON.parse(String(out));
+    expect(doc.root.children).toHaveLength(1);
+    expect(doc.root.children[0].type).toBe("html");
+    expect(doc.root.children[0].html).toContain('<ul class="pf-grid pf-cols-3">');
+    expect(updatePage).not.toHaveBeenCalled();
   });
 
-  it("runs sync and updates Ghost page", async () => {
-    const config = makeConfig();
-    const repos = [makeRepo()];
-    const page = { id: "page1", updated_at: "2024-01-01", title: "Portfolio" };
-    const updatedPage = { ...page, updated_at: "2024-01-02" };
-    const lexical = { root: { children: [] } };
+  it("writes a preview page with --html-out and does not touch Ghost", async () => {
+    loadConfig.mockReturnValue(makeConfig());
+    fetchAllRepos.mockResolvedValue([makeRepo()]);
+    selectRepos.mockReturnValue([makeRepo()]);
 
+    await runCLI(["sync", "-c", tmpConfig, "--html-out", htmlOut]);
+
+    const page = readFileSync(htmlOut, "utf-8");
+    expect(page.startsWith("<!doctype html>")).toBe(true);
+    expect(page).toContain('<li class="pf-card">');
+    expect(fetchPage).not.toHaveBeenCalled();
+    expect(updatePage).not.toHaveBeenCalled();
+  });
+
+  it("updates the Ghost page with a single html card", async () => {
+    const config = makeConfig();
+    const page = { id: "page1", updated_at: "2024-01-01", title: "Portfolio" };
     loadConfig.mockReturnValue(config);
-    fetchRepos.mockResolvedValue(repos);
-    detectBanner.mockResolvedValue("https://example.com/banner.svg");
-    fetchPortfolioConfig.mockResolvedValue(null);
-    generateCard.mockReturnValue("<h2>test-repo</h2>");
-    generateFooter.mockReturnValue("<h2>Footer</h2>");
-    buildLexical.mockReturnValue(lexical);
+    fetchAllRepos.mockResolvedValue([makeRepo()]);
+    selectRepos.mockReturnValue([makeRepo()]);
+    resolveBanner.mockResolvedValue({ url: "https://x/banner.svg", problems: [] });
     fetchPage.mockResolvedValue(page);
-    updatePage.mockResolvedValue(updatedPage);
+    updatePage.mockResolvedValue({ ...page, updated_at: "2024-01-02" });
 
     await runCLI(["sync", "-c", tmpConfig]);
 
-    expect(fetchPage).toHaveBeenCalled();
-    expect(updatePage).toHaveBeenCalledWith(config, "page1", "2024-01-01", lexical);
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Portfolio updated"));
+    expect(updatePage).toHaveBeenCalledTimes(1);
+    const [cfg, id, updatedAt, lexical] = updatePage.mock.calls[0];
+    expect(cfg).toBe(config);
+    expect(id).toBe("page1");
+    expect(updatedAt).toBe("2024-01-01");
+    expect(lexical.root.children).toHaveLength(1);
+    expect(lexical.root.children[0].html).toContain('<img src="https://x/banner.svg"');
+    expect(logged()).toContain("Portfolio updated: Portfolio");
+    expect(logged()).toContain("1 banners, 0 tiles");
   });
 
-  it("handles sync with zero repos found", async () => {
-    const config = makeConfig();
-
-    loadConfig.mockReturnValue(config);
-    fetchRepos.mockResolvedValue([]);
+  it("handles zero repos", async () => {
+    loadConfig.mockReturnValue(makeConfig());
+    fetchAllRepos.mockResolvedValue([]);
+    selectRepos.mockReturnValue([]);
 
     await runCLI(["sync", "-c", tmpConfig]);
 
     expect(consoleSpy).toHaveBeenCalledWith("No repos found. Check your config.");
+    expect(resolveBanner).not.toHaveBeenCalled();
   });
 
-  it("handles sync errors gracefully", async () => {
+  it("handles errors with exit code 1", async () => {
     loadConfig.mockImplementation(() => {
       throw new Error("Config file not found");
     });
@@ -212,68 +226,67 @@ describe("CLI sync command", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("runs sync with --verbose flag", async () => {
-    const config = makeConfig();
-    const repos = [makeRepo()];
-
-    loadConfig.mockReturnValue(config);
-    fetchRepos.mockResolvedValue(repos);
-    detectBanner.mockResolvedValue(null);
-    fetchPortfolioConfig.mockResolvedValue(null);
-    generateCard.mockReturnValue("<h2>test-repo</h2>");
-    generateFooter.mockReturnValue(null);
-    buildLexical.mockReturnValue({ root: { children: [] } });
+  it("logs progress with --verbose", async () => {
+    loadConfig.mockReturnValue(makeConfig());
+    fetchAllRepos.mockResolvedValue([makeRepo()]);
+    selectRepos.mockReturnValue([makeRepo()]);
+    fetchPortfolioConfig.mockResolvedValue({ description: "From file" });
 
     await runCLI(["sync", "-c", tmpConfig, "--dry-run", "-v"]);
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Fetching repos"));
+    expect(logged()).toContain("Fetching repos");
+    expect(logged()).toContain("test-repo: loaded .ghost-portfolio.yml");
+    expect(logged()).toContain("Checking banners");
   });
 
-  it("merges per-repo portfolio config from .ghost-portfolio.yml", async () => {
+  it("merges .ghost-portfolio.yml under config.yml and before the banner check", async () => {
     const config = makeConfig();
-    const repos = [makeRepo()];
-    const portfolioOverride = { description: "From repo file" };
-
+    config.portfolio.repos["test-repo"] = { description: "From config" };
     loadConfig.mockReturnValue(config);
-    fetchRepos.mockResolvedValue(repos);
-    detectBanner.mockResolvedValue(null);
-    fetchPortfolioConfig.mockResolvedValue(portfolioOverride);
-    generateCard.mockReturnValue("<h2>test-repo</h2>");
-    generateFooter.mockReturnValue(null);
-    buildLexical.mockReturnValue({ root: { children: [] } });
+    fetchAllRepos.mockResolvedValue([makeRepo()]);
+    selectRepos.mockReturnValue([makeRepo()]);
+    fetchPortfolioConfig.mockResolvedValue({
+      description: "From repo file",
+      bannerPath: "media/banner.svg",
+      homepage: undefined,
+    });
+    let bannerPathAtCheck: string | undefined;
+    resolveBanner.mockImplementation(async (_repo, cfg: Config) => {
+      bannerPathAtCheck = cfg.portfolio.repos["test-repo"].bannerPath;
+      return { url: null, problems: [] };
+    });
 
     await runCLI(["sync", "-c", tmpConfig, "--dry-run"]);
 
-    // The config should have been mutated with the portfolio override
-    expect(config.portfolio.repos["test-repo"]).toBeDefined();
-    expect(config.portfolio.repos["test-repo"].description).toBe("From repo file");
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(resolveBanner).toHaveBeenCalledTimes(1);
+    expect(bannerPathAtCheck).toBe("media/banner.svg");
+    expect(config.portfolio.repos["test-repo"]).toEqual({
+      description: "From config",
+      bannerPath: "media/banner.svg",
+    });
   });
 
-  it("filters awesome lists when excludeAwesomeLists is true", async () => {
-    const config = makeConfig();
-    config.portfolio.excludeAwesomeLists = true;
-    const repos = [
-      makeRepo({ name: "awesome-spain", stargazers_count: 10, topics: ["awesome-list"] }),
-      makeRepo({ name: "normal-repo", stargazers_count: 10 }),
-    ];
+  it("cleans a .ghost-portfolio.yml description like a GitHub one", async () => {
+    const repo = makeRepo({ description: "GitHub text" });
+    loadConfig.mockReturnValue(makeConfig());
+    fetchAllRepos.mockResolvedValue([repo]);
+    selectRepos.mockReturnValue([repo]);
+    fetchPortfolioConfig.mockResolvedValue({
+      description: "Manage docs through Telegram \u2014 upload and tag. A second sentence.",
+    });
 
-    loadConfig.mockReturnValue(config);
-    fetchRepos.mockResolvedValue(repos);
-    detectBanner.mockResolvedValue(null);
-    fetchPortfolioConfig.mockResolvedValue(null);
-    generateCard.mockReturnValue("<h2>card</h2>");
-    generateFooter.mockReturnValue(null);
-    buildLexical.mockReturnValue({ root: { children: [] } });
+    await runCLI(["sync", "-c", tmpConfig, "--json"]);
 
-    await runCLI(["sync", "-c", tmpConfig, "--dry-run"]);
-
-    // generateCard should only be called for non-awesome repos
-    expect(generateCard).toHaveBeenCalledTimes(1);
+    const out = consoleSpy.mock.calls.map((c) => c[0]).find((s) => String(s).startsWith("{"));
+    const html = JSON.parse(String(out)).root.children[0].html;
+    expect(html).toContain('<p class="pf-line">Manage docs through Telegram, upload and tag.</p>');
+    expect(html).not.toContain("GitHub text");
   });
 });
 
 describe("CLI init command", () => {
-  let generateExampleConfig: ReturnType<typeof vi.fn>;
+  let generateExampleConfig: Mock;
   let consoleSpy: ReturnType<typeof vi.spyOn>;
   let originalArgv: string[];
   const outputPath = "/tmp/test-init-config.yml";
@@ -281,7 +294,7 @@ describe("CLI init command", () => {
   beforeEach(async () => {
     vi.resetModules();
     const configMod = await import("./config.js");
-    generateExampleConfig = configMod.generateExampleConfig as ReturnType<typeof vi.fn>;
+    generateExampleConfig = configMod.generateExampleConfig as Mock;
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     originalArgv = process.argv;
   });
@@ -301,7 +314,7 @@ describe("CLI init command", () => {
     await import("./index.js");
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(existsSync(outputPath)).toBe(true);
+    expect(readFileSync(outputPath, "utf-8")).toBe("github:\n  username: test\n");
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Example config written"));
   });
 });

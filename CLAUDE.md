@@ -1,7 +1,7 @@
 # CLAUDE.md — Ghost GitHub Portfolio
 
 ## Overview
-Auto-syncs GitHub repositories to a Ghost CMS portfolio page. Fetches repos via the GitHub REST API, sorts by stars, generates HTML cards with dynamic banners and shields.io badges, and updates a Ghost page via the Admin API using the lexical editor format.
+Writes a Ghost page with the owner's top GitHub repositories by stars: one html card with scoped CSS holding a responsive grid (3, 2, 1 columns) of banner tiles, name, one-line description, star count and optional Site link. Since 0.4.0 there are no badges, no footer and no stats block.
 
 ## Tech Stack
 - TypeScript (strict mode, ES2022, NodeNext, ESM)
@@ -28,9 +28,10 @@ npm run lint         # tsc --noEmit
 src/
 ├── index.ts       # CLI entry point (commander: sync + init commands)
 ├── config.ts      # YAML config loader, defaults, env var overrides, validation
-├── github.ts      # GitHub REST API: fetch all repos (paginated), sort client-side, detect banners via HEAD
+├── github.ts      # GitHub REST API: fetch all repos (paginated), sort client-side, filter, validate banners (200 + self-contained SVG)
 ├── ghost.ts       # Ghost Admin API: JWT generation (HS256), fetch page, update page (lexical format)
-├── generator.ts   # HTML card generation: banners, badges, footer, lexical document builder
+├── generator.ts   # The single html card: intro, grid of tiles, closing line; lexical document builder
+├── http.ts        # rawRequest over node:http/https for the origin route (fetch drops a custom Host header)
 └── types.ts       # TypeScript interfaces: Config, GitHubRepo, LexicalDocument, CustomBadge
 ```
 
@@ -53,9 +54,11 @@ Other files:
 1. **Client-side star sorting**: GitHub REST API `/users/{user}/repos` does NOT support `sort=stars`. All pages are fetched, then sorted in memory. Do NOT add `sort=stars` to the API URL.
 2. **Ghost lexical format**: The document is a JSON AST with `html` nodes and `horizontalrule` nodes. Do NOT invent new node types.
 3. **JWT authentication**: Ghost Admin API uses HS256 JWT with key ID in `kid` header. Secret is hex-decoded. Tokens expire in 5 minutes. Implemented via `node:crypto` only.
-4. **Banner detection**: Checks multiple candidate paths via HEAD requests to `raw.githubusercontent.com`. Config overrides take priority, then default path, then candidates list. All checks parallel per repo.
-5. **Dynamic badges**: All shields.io badges are live URLs — stars, forks, Docker pulls update on every page view without re-running the tool.
-6. **Inline styles only**: Ghost strips CSS classes and `<style>` tags. All styling must use inline `style=""` attributes.
+4. **Banner validation**: the per-repo `bannerPaths` entry, else `defaultBannerPath`, fetched from `raw.githubusercontent.com`; used only if it answers 200 and, for SVG, has no relative or external `href`/`url()` reference (browsers never load those inside an `<img>`). Otherwise a typographic tile of the same 9:2 shape, and a warning naming the reason.
+5. **No badges, no stats**: removed in 0.4.0 on purpose. Stars are plain text and refresh when the tool runs.
+6. **One html card with a scoped `<style>`**: Ghost keeps `<style>` inside an html card (`<!--kg-card-begin: html-->`), class prefix `pf-`. The card sits in the theme's wide column.
+7. **Origin route**: `ghost.originUrl` + `ghost.hostHeader` send Admin API requests to the container directly with `Host: <hostHeader>` and `X-Forwarded-Proto: https`, because the WAF in front of the public URL (Coraza in Caddy) rejects bodies containing `<img`. Implemented with `node:http` because `fetch` silently drops a custom Host header.
+8. **Descriptions**: a `description` in config.yml is used verbatim; GitHub descriptions and per-repo `.ghost-portfolio.yml` lines are cut to the first sentence, dashes become commas, emoji are removed, 140 characters max.
 
 ## CI/CD and Release Process
 
@@ -81,7 +84,7 @@ git push origin main --tags
 
 - TypeScript strict mode, ESM modules (`"type": "module"`)
 - All imports use `.js` extension (NodeNext resolution)
-- No external HTTP libraries — native `fetch` only
+- No external HTTP libraries: native `fetch`, plus `node:http`/`node:https` for the origin route
 - No JWT libraries — manual HS256 via `node:crypto`
 - Tests use Vitest with `.test.ts` suffix, co-located with source
 - Config file is YAML (not JSON, not TOML)
@@ -102,18 +105,18 @@ ghost:
 
 portfolio:             # All optional, has defaults
   minStars: 2
-  maxRepos: 50
+  maxRepos: 20         # applied AFTER excludeAwesomeLists, excludeRepos and includeArchived
+  columns: 3
   includeForked: false
-  badgeStyle: for-the-badge
+  includeArchived: false
+  excludeAwesomeLists: true
+  excludePatterns: ["^homebrew-"]
+  intro: string        # the paragraph above the grid
   showBanner: true
-  centerContent: true
   defaultBannerPath: docs/images/banner.svg
   bannerPaths: {}      # repo-name: path overrides
   excludeRepos: []
-  repos: {}            # Per-repo overrides (description, dockerImage, badges, techStack, keyFeatures)
-  footer:
-    showStats: true
-    showViewAll: true
+  repos: {}            # Per-repo overrides (description verbatim, siteLabel, homepage)
 ```
 
 ## Testing
@@ -148,9 +151,10 @@ Composite action that installs Node 22, builds from source, and runs sync. Input
 
 ## Common Pitfalls
 
-1. **Ghost redirects to canonical URL**: Always use the public Ghost URL, not localhost.
+1. **Ghost redirects to canonical URL**: use the public Ghost URL, or `originUrl` with `hostHeader` set to the canonical host.
 2. **`updated_at` concurrency**: Ghost uses optimistic concurrency — PUT must include current `updated_at` from a fresh GET. Stale values cause 409 errors.
 3. **GitHub pagination**: API returns max 100 repos per page. Must loop until `repos.length < perPage`.
-4. **Banner HEAD requests**: `raw.githubusercontent.com` returns 404 for missing files — no error page. HEAD requests are cheap and reliable.
+4. **Banner checks**: `raw.githubusercontent.com` returns 404 for missing files. The SVG body is fetched to check it is self-contained.
+5. **Deployment for geiser.cloud**: the container runs in the `ghost` stack of `gitops-geiserback` with `originUrl: http://ghost:2368`, config mounted from `/mnt/user/appdata/ghost/portfolio/config.yml` (holds the key; not in git, not Infisical-rendered).
 
 *Generated by [LynxPrompt](https://lynxprompt.com) CLI*
