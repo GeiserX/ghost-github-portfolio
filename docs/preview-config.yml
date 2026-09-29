@@ -1,0 +1,44 @@
+# Reproduces the portfolio page on geiser.cloud for the preview in this folder:
+#   node dist/index.js sync -c docs/preview-config.yml --html-out docs/preview.html
+# The Ghost key is a placeholder; a preview never talks to Ghost.
+github:
+  username: GeiserX
+
+ghost:
+  url: https://geiser.cloud
+  adminApiKey: "preview:00"
+  pageSlug: portfolio
+
+portfolio:
+  maxRepos: 20
+  columns: 3
+  excludeAwesomeLists: true
+  excludeRepos:
+    - .github
+  repos:
+    Telegram-Archive:
+      description: "Own your Telegram history: incremental backups with a local viewer that feels like the real app."
+    genieacs-container:
+      description: "The original and most used container and Helm chart for GenieACS."
+      homepage: https://geiser.cloud/how-to-deploy-genieacs/
+      siteLabel: Guide
+    VPN-Bypass:
+      description: "macOS menu-bar app for per-domain VPN routing, with a CLI."
+    whisper-subs:
+      description: "Jellyfin plugin that generates subtitles locally with Whisper."
+    CashPilot:
+      description: "Self-hosted passive income platform: deploy once, track earnings."
+    LynxPrompt:
+      description: "Self-hosted, federated platform for AI IDE rules and commands (AGENTS.md, CLAUDE.md)."
+    DeclaRenta:
+      description: "Turns foreign broker reports into Spanish tax filings (Modelo 100, 720, 721, D-6). Free, private, self-hosted."
+    Wayback-Archive:
+      description: "Download complete websites from the Wayback Machine for offline viewing."
+    Pumperly:
+      description: "Open-source fuel and EV route planner with real-time prices."
+    smart-covers:
+      description: "Jellyfin plugin: cover extraction from PDF, EPUB and audiobooks."
+    genieacs-mcp:
+      description: "MCP server for GenieACS."
+    Personal-Genome-Pipeline:
+      description: "Whole-genome analysis pipeline for consumer hardware, fully local."
