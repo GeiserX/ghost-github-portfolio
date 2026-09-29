@@ -1,485 +1,335 @@
 import { describe, it, expect } from "vitest";
 import {
   generateCard,
-  generateFooter,
+  generatePortfolioHtml,
   buildLexical,
+  buildPreviewPage,
+  wrapHtmlCard,
+  cleanDescription,
+  formatStars,
+  siteLink,
+  repoDescription,
 } from "./generator.js";
 import type { Config, GitHubRepo } from "./types.js";
 
-const mockConfig: Config = {
-  github: { username: "testuser" },
-  ghost: {
-    url: "https://blog.example.com",
-    adminApiKey: "abc:def",
-    pageSlug: "portfolio",
-  },
-  portfolio: {
-    minStars: 2,
-    maxRepos: 50,
-    excludeRepos: [],
-    includeForked: false,
-    badgeStyle: "for-the-badge",
-    showBanner: true,
-    centerContent: true,
-    defaultBannerPath: "docs/images/banner.svg",
-    bannerPaths: {},
-    repos: {},
-    footer: { showStats: true, showViewAll: true },
-  },
-};
+function makeConfig(portfolio: Partial<Config["portfolio"]> = {}): Config {
+  return {
+    github: { username: "testuser", excludePatterns: [] },
+    ghost: {
+      url: "https://ghost.example.com",
+      adminApiKey: "key:secret",
+      pageSlug: "portfolio",
+    },
+    portfolio: {
+      minStars: 2,
+      maxRepos: 20,
+      columns: 3,
+      excludeRepos: [],
+      includeForked: false,
+      includeArchived: false,
+      excludeAwesomeLists: true,
+      showBanner: true,
+      defaultBannerPath: "docs/images/banner.svg",
+      bannerPaths: {},
+      intro: "Intro text.",
+      repos: {},
+      ...portfolio,
+    },
+  };
+}
 
-const mockRepo: GitHubRepo = {
-  name: "test-repo",
-  full_name: "testuser/test-repo",
-  html_url: "https://github.com/testuser/test-repo",
-  description: "A test repository",
-  stargazers_count: 42,
-  forks_count: 5,
-  license: { spdx_id: "GPL-3.0" },
-  fork: false,
-  homepage: null,
-  topics: ["docker", "typescript"],
-  language: "TypeScript",
-  default_branch: "main",
-};
+function makeRepo(overrides: Partial<GitHubRepo> = {}): GitHubRepo {
+  return {
+    name: "test-repo",
+    full_name: "testuser/test-repo",
+    html_url: "https://github.com/testuser/test-repo",
+    description: "A test repository",
+    stargazers_count: 42,
+    forks_count: 5,
+    license: { spdx_id: "GPL-3.0" },
+    fork: false,
+    archived: false,
+    homepage: null,
+    topics: [],
+    language: "TypeScript",
+    default_branch: "main",
+    ...overrides,
+  };
+}
 
-describe("generateCard", () => {
-  it("generates HTML with title and badges", () => {
-    const html = generateCard(mockRepo, null, mockConfig);
-
-    expect(html).toContain("test-repo");
-    expect(html).toContain("github.com/testuser/test-repo");
-    expect(html).toContain("img.shields.io/github/stars");
-    expect(html).toContain("img.shields.io/github/forks");
-    expect(html).toContain("img.shields.io/github/license");
-    expect(html).toContain("A test repository");
-    expect(html).toContain("<hr>");
+describe("cleanDescription", () => {
+  it("keeps only the first sentence", () => {
+    expect(cleanDescription("Backs up chats. Also has a viewer.")).toBe(
+      "Backs up chats.",
+    );
   });
 
-  it("includes banner when provided", () => {
-    const banner = "https://raw.githubusercontent.com/testuser/test-repo/main/docs/images/banner.svg";
-    const html = generateCard(mockRepo, banner, mockConfig);
-
-    expect(html).toContain(banner);
-    expect(html).toContain("banner");
-    expect(html).toContain("border-radius:8px");
+  it("does not split on abbreviations or dotted names", () => {
+    expect(
+      cleanDescription("Runs anything, e.g. Docker or Node.js apps. Second."),
+    ).toBe("Runs anything, e.g. Docker or Node.js apps.");
   });
 
-  it("centers content when configured", () => {
-    const html = generateCard(mockRepo, null, mockConfig);
-
-    expect(html).toContain("text-align:center");
-    expect(html).toContain("justify-content:center");
+  it("turns em and en dashes into commas", () => {
+    expect(cleanDescription("Own your history \u2014 local backups")).toBe(
+      "Own your history, local backups.",
+    );
+    expect(cleanDescription("Fast\u2013simple tool")).toBe("Fast, simple tool.");
   });
 
-  it("does not center when disabled", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: { ...mockConfig.portfolio, centerContent: false },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).not.toContain("text-align:center");
+  it("removes emoji and shortcodes", () => {
+    expect(cleanDescription("\u{1F680} Rocket fast :sparkles: tool ❤️")).toBe(
+      "Rocket fast tool.",
+    );
+    expect(cleanDescription("Flags \u{1F1EA}\u{1F1F8} and hands \u{1F44B}\u{1F3FD} gone")).toBe(
+      "Flags and hands gone.",
+    );
   });
 
-  it("uses custom description from config override", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: { "test-repo": { description: "Custom desc" } },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("Custom desc");
-    expect(html).not.toContain("A test repository");
+  it("keeps copyright and trademark signs", () => {
+    expect(cleanDescription("Widget™ for Foo®")).toBe(
+      "Widget™ for Foo®.",
+    );
   });
 
-  it("adds docker badge from config", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: { "test-repo": { dockerImage: "drumsergio/test-repo" } },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("docker/pulls/drumsergio/test-repo");
-    expect(html).toContain("hub.docker.com");
+  it("caps the length at 140 characters on a word boundary", () => {
+    const long = "word ".repeat(60).trim();
+    const out = cleanDescription(long);
+    expect(out.length).toBeLessThanOrEqual(140);
+    expect(out.endsWith("word…")).toBe(true);
   });
 
-  it("adds website badge from homepage", () => {
-    const repo = { ...mockRepo, homepage: "https://test-repo.com" };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).toContain("test-repo.com");
-    expect(html).toContain("website");
+  it("cuts a single overlong word hard", () => {
+    const out = cleanDescription("x".repeat(300));
+    expect(out).toHaveLength(140);
+    expect(out.endsWith("…")).toBe(true);
   });
 
-  it("auto-detects awesome-list badge from topics", () => {
-    const repo = { ...mockRepo, topics: ["awesome-list"] };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).toContain("awesome");
-    expect(html).toContain("awesomelists");
+  it("keeps existing terminal punctuation", () => {
+    expect(cleanDescription("Is it done?")).toBe("Is it done?");
   });
 
-  it("infers tech stack from language and topics", () => {
-    const html = generateCard(mockRepo, null, mockConfig);
-
-    expect(html).toContain("TypeScript");
-    expect(html).toContain("Docker");
-  });
-
-  it("escapes HTML in description", () => {
-    const repo = {
-      ...mockRepo,
-      description: "Uses <script> & \"quotes\"",
-    };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).toContain("&lt;script&gt;");
-    expect(html).toContain("&amp;");
-    expect(html).toContain("&quot;quotes&quot;");
-  });
-
-  it("renders personalNote from config override", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: { "test-repo": { personalNote: "My favorite project" } },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("My favorite project");
-  });
-
-  it("renders keyFeatures list from config override", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            keyFeatures: ["Feature A", "Feature B"],
-          },
-        },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("Key Features:");
-    expect(html).toContain("<li>Feature A</li>");
-    expect(html).toContain("<li>Feature B</li>");
-  });
-
-  it("uses techStack override from config", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: { "test-repo": { techStack: "Rust, WASM" } },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("Rust, WASM");
-    expect(html).not.toContain("TypeScript");
-  });
-
-  it("renders custom badge type 'docker'", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [{ type: "docker" as const, label: "myuser/myimage" }],
-          },
-        },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("hub.docker.com/r/myuser/myimage");
-    expect(html).toContain("docker/pulls/myuser/myimage");
-  });
-
-  it("renders custom badge type 'platform'", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [
-              { type: "platform" as const, label: "macOS", color: "000", logo: "apple" },
-            ],
-          },
-        },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("platform");
-    expect(html).toContain("macOS");
-    expect(html).toContain("apple");
-  });
-
-  it("renders custom badge type 'docs'", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [{ type: "docs" as const, url: "https://docs.example.com" }],
-          },
-        },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("https://docs.example.com");
-    expect(html).toContain("docs");
-  });
-
-  it("renders custom badge type 'custom'", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [
-              { type: "custom" as const, label: "MCP", value: "Official", color: "E6522C" },
-            ],
-          },
-        },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("MCP");
-    expect(html).toContain("Official");
-    expect(html).toContain("E6522C");
-  });
-
-  it("renders custom badge type 'website' with explicit url and label", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [
-              { type: "website" as const, url: "https://my-site.com", label: "MySite" },
-            ],
-          },
-        },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("https://my-site.com");
-    expect(html).toContain("MySite");
-  });
-
-  it("renders custom badge type 'awesome-list'", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [{ type: "awesome-list" as const, color: "ff0000" }],
-          },
-        },
-      },
-    };
-    const html = generateCard(mockRepo, null, config);
-
-    expect(html).toContain("awesome");
-    expect(html).toContain("ff0000");
-  });
-
-  it("skips auto awesome-list badge when already in custom badges", () => {
-    const repo = { ...mockRepo, topics: ["awesome-list"] };
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [{ type: "awesome-list" as const }],
-          },
-        },
-      },
-    };
-    const html = generateCard(repo, null, config);
-
-    // Should have exactly one awesome badge (from custom), not two
-    const matches = html.match(/awesomelists/g);
-    expect(matches).toHaveLength(1);
-  });
-
-  it("adds docs badge for github.io homepage", () => {
-    const repo = { ...mockRepo, homepage: "https://testuser.github.io/test-repo" };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).toContain("docs");
-    expect(html).toContain("testuser.github.io");
-  });
-
-  it("skips docs badge when already in custom badges", () => {
-    const repo = { ...mockRepo, homepage: "https://testuser.github.io/test-repo" };
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        repos: {
-          "test-repo": {
-            badges: [{ type: "docs" as const, url: "https://docs.example.com" }],
-          },
-        },
-      },
-    };
-    const html = generateCard(repo, null, config);
-
-    // Custom docs badge URL should appear, not the auto-detected one
-    expect(html).toContain("https://docs.example.com");
-  });
-
-  it("skips website badge for docker hub homepage", () => {
-    const repo = { ...mockRepo, homepage: "https://hub.docker.com/r/myuser/myimage" };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).not.toContain("website");
-  });
-
-  it("skips license badge when no license", () => {
-    const repo = { ...mockRepo, license: null };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).not.toContain("github/license");
-  });
-
-  it("returns null tech stack when no language or relevant topics", () => {
-    const repo = { ...mockRepo, language: null, topics: [] };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).not.toContain("Tech Stack:");
-  });
-
-  it("shows no description when repo has none and no override", () => {
-    const repo = { ...mockRepo, description: null };
-    const html = generateCard(repo, null, mockConfig);
-
-    expect(html).not.toContain("<em>");
+  it("returns an empty string for emoji-only input", () => {
+    expect(cleanDescription("\u{1F680}\u{1F680}")).toBe("");
   });
 });
 
-describe("generateFooter", () => {
-  it("generates stats footer", () => {
-    const footer = generateFooter([mockRepo], mockConfig);
+describe("formatStars", () => {
+  it("writes plain text with the right plural", () => {
+    expect(formatStars(215)).toBe("215 stars");
+    expect(formatStars(1)).toBe("1 star");
+    expect(formatStars(1234)).toBe("1,234 stars");
+  });
+});
 
-    expect(footer).toContain("GitHub Stats");
-    expect(footer).toContain("42+");
-    expect(footer).toContain("View All Repositories");
+describe("siteLink", () => {
+  it("uses a non-GitHub homepage with the default label", () => {
+    const link = siteLink(makeRepo({ homepage: "https://pumperly.com" }), makeConfig());
+    expect(link).toEqual({ url: "https://pumperly.com", label: "Site" });
   });
 
-  it("returns null when both options disabled", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        footer: { showStats: false, showViewAll: false },
+  it("skips github.com homepages", () => {
+    expect(
+      siteLink(makeRepo({ homepage: "https://github.com/testuser/x" }), makeConfig()),
+    ).toBeNull();
+  });
+
+  it("keeps GitHub Pages sites", () => {
+    expect(
+      siteLink(makeRepo({ homepage: "https://testuser.github.io/x/" }), makeConfig())?.url,
+    ).toBe("https://testuser.github.io/x/");
+  });
+
+  it("skips empty, invalid and non-http homepages", () => {
+    expect(siteLink(makeRepo({ homepage: "" }), makeConfig())).toBeNull();
+    expect(siteLink(makeRepo({ homepage: "not a url" }), makeConfig())).toBeNull();
+    expect(siteLink(makeRepo({ homepage: "javascript:alert(1)" }), makeConfig())).toBeNull();
+  });
+
+  it("applies the per-repo homepage and label override", () => {
+    const config = makeConfig({
+      repos: {
+        "test-repo": { homepage: "https://blog.example.com/guide/", siteLabel: "Guide" },
       },
-    };
-    const footer = generateFooter([mockRepo], config);
+    });
+    expect(siteLink(makeRepo({ homepage: "https://github.com/x" }), config)).toEqual({
+      url: "https://blog.example.com/guide/",
+      label: "Guide",
+    });
+  });
+});
 
-    expect(footer).toBeNull();
+describe("repoDescription", () => {
+  it("prefers the config override verbatim", () => {
+    const config = makeConfig({
+      repos: { "test-repo": { description: "Curated. Two sentences stay." } },
+    });
+    expect(repoDescription(makeRepo(), config)).toBe("Curated. Two sentences stay.");
   });
 
-  it("shows only viewAll link when showStats is false", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        footer: { showStats: false, showViewAll: true },
-      },
-    };
-    const footer = generateFooter([mockRepo], config);
-
-    expect(footer).toContain("View All Repositories");
-    expect(footer).not.toContain("Total Stars");
+  it("cleans the GitHub description otherwise", () => {
+    expect(
+      repoDescription(makeRepo({ description: "Tool \u2014 fast. More." }), makeConfig()),
+    ).toBe("Tool, fast.");
   });
 
-  it("shows stats without viewAll when showViewAll is false", () => {
-    const config = {
-      ...mockConfig,
-      portfolio: {
-        ...mockConfig.portfolio,
-        footer: { showStats: true, showViewAll: false },
-      },
-    };
-    const footer = generateFooter([mockRepo], config);
+  it("returns empty when there is no description", () => {
+    expect(repoDescription(makeRepo({ description: null }), makeConfig())).toBe("");
+  });
+});
 
-    expect(footer).toContain("42+");
-    expect(footer).not.toContain("View All Repositories");
+describe("generateCard", () => {
+  it("renders a banner card", () => {
+    const html = generateCard(
+      makeRepo({ homepage: "https://example.com" }),
+      "https://raw.githubusercontent.com/testuser/test-repo/main/docs/images/banner.svg",
+      makeConfig(),
+    );
+    expect(html).toContain('<li class="pf-card">');
+    expect(html).toContain('<a class="pf-media" href="https://github.com/testuser/test-repo"');
+    expect(html).toContain('<img src="https://raw.githubusercontent.com/testuser/test-repo/main/docs/images/banner.svg" alt="" loading="lazy">');
+    expect(html).toContain('<h3 class="pf-name"><a href="https://github.com/testuser/test-repo">test-repo</a></h3>');
+    expect(html).toContain('<span class="pf-stars">42 stars</span>');
+    expect(html).toContain('<p class="pf-line">A test repository. <a href="https://example.com">Site</a></p>');
   });
 
-  it("aggregates stats across multiple repos", () => {
-    const repos = [
-      mockRepo,
-      { ...mockRepo, name: "repo2", stargazers_count: 10, language: "Python", topics: ["flask"] },
-    ];
-    const footer = generateFooter(repos, mockConfig);
-
-    expect(footer).toContain("52+"); // 42 + 10
-    expect(footer).toContain("2"); // 2 repos
-    expect(footer).toContain("TypeScript");
-    expect(footer).toContain("Python");
+  it("renders a name tile when there is no banner", () => {
+    const html = generateCard(makeRepo(), null, makeConfig());
+    expect(html).toContain('<a class="pf-media pf-tile"');
+    expect(html).toContain("<span>test-repo</span>");
+    expect(html).not.toContain("<img");
   });
 
-  it("shows focus areas from topic counts", () => {
-    const repos = [
-      { ...mockRepo, topics: ["docker", "kubernetes"] },
-      { ...mockRepo, name: "r2", topics: ["docker", "terraform"] },
-    ];
-    const footer = generateFooter(repos, mockConfig);
-
-    expect(footer).toContain("Docker");
+  it("has no badges, forks, licence or tech stack", () => {
+    const html = generateCard(makeRepo({ topics: ["docker"] }), null, makeConfig());
+    expect(html).not.toContain("shields.io");
+    expect(html).not.toContain("Forks");
+    expect(html).not.toContain("License");
+    expect(html).not.toContain("Tech Stack");
+    expect(html).not.toContain("<hr");
   });
 
-  it("shows no languages line when none present", () => {
-    const repos = [{ ...mockRepo, language: null, topics: [] }];
-    const footer = generateFooter(repos, mockConfig);
+  it("omits the line when there is neither description nor site", () => {
+    const html = generateCard(makeRepo({ description: null }), null, makeConfig());
+    expect(html).not.toContain("pf-line");
+  });
 
-    expect(footer).not.toContain("Primary Languages");
+  it("escapes names, descriptions and URLs", () => {
+    const config = makeConfig({
+      repos: { "test-repo": { description: '<script>"x"</script>' } },
+    });
+    const html = generateCard(
+      makeRepo({ homepage: 'https://e.com/?a="b"&c' }),
+      null,
+      config,
+    );
+    expect(html).toContain("&lt;script&gt;&quot;x&quot;&lt;/script&gt;");
+    expect(html).toContain('href="https://e.com/?a=&quot;b&quot;&amp;c"');
+    expect(html).not.toContain("<script>");
+  });
+});
+
+describe("generatePortfolioHtml", () => {
+  const cards = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      generateCard(makeRepo({ name: `r${i}` }), null, makeConfig()),
+    );
+
+  it("renders one grid with every card and the column class", () => {
+    const html = generatePortfolioHtml({ cards: cards(20), totalRepos: 200 }, makeConfig());
+    expect(html.match(/<li class="pf-card">/g)).toHaveLength(20);
+    expect(html).toContain('<ul class="pf-grid pf-cols-3">');
+    expect(html).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
+    expect(html.match(/<ul /g)).toHaveLength(1);
+  });
+
+  it("drops to two columns on tablets and one on phones", () => {
+    const html = generatePortfolioHtml({ cards: cards(3), totalRepos: 3 }, makeConfig());
+    expect(html).toMatch(
+      /@media \(max-width: 1024px\) \{\s*\.pf \.pf-grid\.pf-cols-3 \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/,
+    );
+    expect(html).toMatch(
+      /@media \(max-width: 640px\) \{\s*\.pf \.pf-grid\.pf-cols-3 \{ grid-template-columns: 1fr;/,
+    );
+  });
+
+  it("skips the tablet rule when there are two columns or fewer", () => {
+    const html = generatePortfolioHtml(
+      { cards: cards(2), totalRepos: 2 },
+      makeConfig({ columns: 2 }),
+    );
+    expect(html).toContain('<ul class="pf-grid pf-cols-2">');
+    expect(html).not.toContain("max-width: 1024px");
+  });
+
+  it("scopes the style with the pf- prefix and uses the wide column", () => {
+    const html = generatePortfolioHtml({ cards: cards(1), totalRepos: 1 }, makeConfig());
+    expect(html.startsWith('<div class="pf kg-width-wide">\n<style>')).toBe(true);
+    const style = html.slice(html.indexOf("<style>") + 7, html.indexOf("</style>"));
+    const selectors = style
+      .split("\n")
+      .filter((l) => l.includes("{") && !l.trim().startsWith("@media"))
+      .map((l) => l.trim().split("{")[0].trim());
+    for (const sel of selectors) {
+      expect(sel.startsWith(".pf")).toBe(true);
+    }
+  });
+
+  it("renders the intro, escaped, and omits it when empty", () => {
+    const html = generatePortfolioHtml(
+      { cards: cards(1), totalRepos: 1 },
+      makeConfig({ intro: "I <3 code." }),
+    );
+    expect(html).toContain('<p class="pf-intro">I &lt;3 code.</p>');
+    const none = generatePortfolioHtml(
+      { cards: cards(1), totalRepos: 1 },
+      makeConfig({ intro: "  " }),
+    );
+    expect(none).not.toContain("pf-intro\">");
+  });
+
+  it("ends with one line pointing at the GitHub profile", () => {
+    const html = generatePortfolioHtml({ cards: cards(20), totalRepos: 215 }, makeConfig());
+    expect(html).toContain(
+      '<p class="pf-more">The other 195 public repositories are on <a href="https://github.com/testuser">github.com/testuser</a>.</p>',
+    );
+    const one = generatePortfolioHtml({ cards: cards(1), totalRepos: 2 }, makeConfig());
+    expect(one).toContain("The other 1 public repository is on");
+    const all = generatePortfolioHtml({ cards: cards(2), totalRepos: 2 }, makeConfig());
+    expect(all).toContain('More on <a href="https://github.com/testuser">');
+  });
+
+  it("has no stats footer, badges or rules", () => {
+    const html = generatePortfolioHtml({ cards: cards(3), totalRepos: 50 }, makeConfig());
+    expect(html).not.toContain("GitHub Stats");
+    expect(html).not.toContain("Total Stars");
+    expect(html).not.toContain("shields.io");
+    expect(html).not.toContain("<hr");
   });
 });
 
 describe("buildLexical", () => {
-  it("builds valid lexical document structure", () => {
-    const doc = buildLexical(["<h3>Test</h3>"], "<h2>Footer</h2>");
-
+  it("wraps the html in a single html card", () => {
+    const doc = buildLexical("<div>x</div>");
     expect(doc.root.type).toBe("root");
-    expect(doc.root.version).toBe(1);
     expect(doc.root.direction).toBe("ltr");
-    expect(doc.root.children).toHaveLength(3); // hr + card + footer
-    expect(doc.root.children[0].type).toBe("horizontalrule");
-    expect(doc.root.children[1].type).toBe("html");
-    expect(doc.root.children[2].type).toBe("html");
+    expect(doc.root.children).toEqual([{ type: "html", version: 1, html: "<div>x</div>" }]);
+  });
+});
+
+describe("preview", () => {
+  it("wraps the card in Ghost's html card markers", () => {
+    expect(wrapHtmlCard("<p>x</p>")).toBe(
+      "<!--kg-card-begin: html-->\n<p>x</p>\n<!--kg-card-end: html-->",
+    );
   });
 
-  it("omits footer when null", () => {
-    const doc = buildLexical(["<h3>Test</h3>"], null);
-
-    expect(doc.root.children).toHaveLength(2); // hr + card
+  it("builds a standalone dark page around the card", () => {
+    const page = buildPreviewPage("<p>card</p>", "Work & play");
+    expect(page.startsWith("<!doctype html>")).toBe(true);
+    expect(page).toContain('<div class="gh-content gh-canvas">');
+    expect(page).toContain("<!--kg-card-begin: html-->\n<p>card</p>");
+    expect(page).toContain("<h1 class=\"post-title\">Work &amp; play</h1>");
+    expect(page).toContain(".gh-canvas > .kg-width-wide { grid-column: wide; }");
   });
 });

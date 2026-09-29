@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createHmac } from "node:crypto";
-import { generateJwt, fetchPage, updatePage } from "./ghost.js";
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { generateJwt, fetchPage, updatePage, adminUrl } from "./ghost.js";
 import type { Config } from "./types.js";
 
 const mockFetch = vi.fn();
@@ -12,7 +14,7 @@ beforeEach(() => {
 
 function makeConfig(overrides: Partial<Config["ghost"]> = {}): Config {
   return {
-    github: { username: "testuser" },
+    github: { username: "testuser", excludePatterns: [] },
     ghost: {
       url: "https://ghost.example.com",
       adminApiKey: "keyid:aabbccdd",
@@ -21,17 +23,17 @@ function makeConfig(overrides: Partial<Config["ghost"]> = {}): Config {
     },
     portfolio: {
       minStars: 2,
-      maxRepos: 50,
+      maxRepos: 20,
+      columns: 3,
       excludeRepos: [],
       includeForked: false,
-      excludeAwesomeLists: false,
-      badgeStyle: "for-the-badge",
+      includeArchived: false,
+      excludeAwesomeLists: true,
       showBanner: true,
-      centerContent: true,
       defaultBannerPath: "docs/images/banner.svg",
       bannerPaths: {},
+      intro: "",
       repos: {},
-      footer: { showStats: true, showViewAll: true },
     },
   };
 }
@@ -166,6 +168,94 @@ describe("updatePage", () => {
     };
     await expect(updatePage(config, "abc123", "2024-01-01", lexical)).rejects.toThrow(
       "Ghost update error 422: Validation error",
+    );
+  });
+});
+
+describe("origin URL routing", () => {
+  interface Seen {
+    method?: string;
+    url?: string;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }
+  let server: Server;
+  let origin: string;
+  let seen: Seen[];
+  let reply: { status: number; body: string; headers?: Record<string, string> };
+
+  beforeEach(async () => {
+    seen = [];
+    reply = {
+      status: 200,
+      body: JSON.stringify({ pages: [{ id: "p1", updated_at: "u2", title: "Portfolio", lexical: "{}" }] }),
+    };
+    server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        seen.push({ method: req.method, url: req.url, headers: req.headers, body });
+        res.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
+        res.end(reply.body);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise((r) => server.close(r));
+  });
+
+  const lexical = {
+    root: { children: [], direction: "ltr", format: "", indent: 0, type: "root", version: 1 },
+  };
+
+  it("uses the public URL when originUrl is not set", () => {
+    expect(adminUrl(makeConfig(), "pages/x/")).toBe(
+      "https://ghost.example.com/ghost/api/admin/pages/x/",
+    );
+  });
+
+  it("sends the PUT to the origin with Host and X-Forwarded-Proto", async () => {
+    const config = makeConfig({ originUrl: origin, hostHeader: "blog.example.com" });
+    const result = await updatePage(config, "p1", "u1", lexical);
+
+    expect(result.id).toBe("p1");
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(seen).toHaveLength(1);
+    expect(seen[0].method).toBe("PUT");
+    expect(seen[0].url).toBe("/ghost/api/admin/pages/p1/");
+    expect(seen[0].headers.host).toBe("blog.example.com");
+    expect(seen[0].headers["x-forwarded-proto"]).toBe("https");
+    expect(seen[0].headers.authorization).toMatch(/^Ghost /);
+    expect(JSON.parse(seen[0].body).pages[0].updated_at).toBe("u1");
+
+    const jwt = String(seen[0].headers.authorization).slice("Ghost ".length);
+    const payload = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString());
+    expect(payload.aud).toBe("/admin/");
+  });
+
+  it("defaults the Host header to the host of ghost.url", async () => {
+    const config = makeConfig({ originUrl: origin, pageSlug: "portfolio" });
+    await fetchPage(config);
+    expect(seen[0].method).toBe("GET");
+    expect(seen[0].url).toBe("/ghost/api/admin/pages/slug/portfolio/");
+    expect(seen[0].headers.host).toBe("ghost.example.com");
+  });
+
+  it("does not follow a redirect from the origin", async () => {
+    reply = { status: 301, body: "moved", headers: { location: "https://ghost.example.com/ghost/api/admin/pages/p1/" } };
+    const config = makeConfig({ originUrl: origin });
+    await expect(fetchPage(config)).rejects.toThrow("Ghost API error 301: moved");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an origin error body", async () => {
+    reply = { status: 403, body: "blocked" };
+    const config = makeConfig({ originUrl: origin });
+    await expect(updatePage(config, "p1", "u1", lexical)).rejects.toThrow(
+      "Ghost update error 403: blocked",
     );
   });
 });

@@ -2,12 +2,18 @@ export interface Config {
   github: {
     username: string;
     token?: string;
+    /** Regular expressions (case-insensitive) matched against repo names to skip. */
+    excludePatterns: string[];
   };
   ghost: {
     url: string;
     adminApiKey: string;
     pageId?: string;
     pageSlug?: string;
+    /** Send Admin API requests here instead of `url` (for example a LAN origin behind a WAF). */
+    originUrl?: string;
+    /** Host header sent with `originUrl` requests. Defaults to the host of `url`. */
+    hostHeader?: string;
   };
   portfolio: PortfolioConfig;
 }
@@ -15,41 +21,26 @@ export interface Config {
 export interface PortfolioConfig {
   minStars: number;
   maxRepos: number;
+  columns: number;
   excludeRepos: string[];
   includeForked: boolean;
+  includeArchived: boolean;
   excludeAwesomeLists: boolean;
-  badgeStyle: string;
   showBanner: boolean;
-  centerContent: boolean;
   defaultBannerPath: string;
   bannerPaths: Record<string, string>;
+  intro: string;
   repos: Record<string, RepoOverride>;
-  footer: FooterConfig;
-}
-
-export interface FooterConfig {
-  showStats: boolean;
-  showViewAll: boolean;
 }
 
 export interface RepoOverride {
   bannerPath?: string;
   description?: string;
-  personalNote?: string;
-  dockerImage?: string;
-  badges?: CustomBadge[];
-  keyFeatures?: string[];
-  techStack?: string;
+  /** Site link for the card. Overrides the GitHub homepage field. */
+  homepage?: string;
+  /** Link text for the site link. Defaults to "Site". */
+  siteLabel?: string;
   exclude?: boolean;
-}
-
-export interface CustomBadge {
-  type: "website" | "docker" | "awesome-list" | "platform" | "docs" | "custom";
-  url?: string;
-  label?: string;
-  value?: string;
-  color?: string;
-  logo?: string;
 }
 
 export interface GitHubRepo {
@@ -61,6 +52,7 @@ export interface GitHubRepo {
   forks_count: number;
   license: { spdx_id: string } | null;
   fork: boolean;
+  archived: boolean;
   homepage: string | null;
   topics: string[];
   language: string | null;
@@ -78,15 +70,10 @@ export interface LexicalDocument {
   };
 }
 
-export type LexicalNode = HtmlNode | HorizontalRuleNode;
+export type LexicalNode = HtmlNode;
 
 export interface HtmlNode {
   type: "html";
   version: number;
   html: string;
-}
-
-export interface HorizontalRuleNode {
-  type: "horizontalrule";
-  version: number;
 }

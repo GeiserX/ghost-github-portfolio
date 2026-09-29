@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchWithRetry, parseRateLimitHeaders } from "./http.js";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { fetchWithRetry, parseRateLimitHeaders, rawRequest } from "./http.js";
 
 const mockFetch = vi.fn();
 
@@ -162,5 +164,74 @@ describe("parseRateLimitHeaders", () => {
   it("returns null when headers are missing", () => {
     const res = new Response(null);
     expect(parseRateLimitHeaders(res)).toBeNull();
+  });
+});
+
+describe("fetchWithRetry fetchImpl", () => {
+  it("uses the given request function instead of the global fetch", async () => {
+    const impl = vi.fn().mockResolvedValue(new Response("ok", { status: 200 }));
+    const res = await fetchWithRetry("https://example.com", { method: "PUT" }, { fetchImpl: impl });
+    expect(await res.text()).toBe("ok");
+    expect(impl).toHaveBeenCalledWith("https://example.com", { method: "PUT" });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("rawRequest", () => {
+  async function withServer(
+    handler: Parameters<typeof createServer>[1],
+    run: (base: string) => Promise<void>,
+  ) {
+    const server: Server = createServer(handler);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  }
+
+  it("sends a custom Host header, method and body", async () => {
+    let got: { host?: string; method?: string; body: string } = { body: "" };
+    await withServer(
+      (req, res) => {
+        let body = "";
+        req.on("data", (c) => (body += c));
+        req.on("end", () => {
+          got = { host: req.headers.host, method: req.method, body };
+          res.setHeader("set-cookie", ["a=1", "b=2"]);
+          res.end("done");
+        });
+      },
+      async (base) => {
+        const res = await rawRequest(`${base}/x`, {
+          method: "POST",
+          headers: { Host: "blog.example.com" },
+          body: "payload",
+        });
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("done");
+        expect(res.headers.get("set-cookie")).toContain("a=1");
+      },
+    );
+    expect(got).toEqual({ host: "blog.example.com", method: "POST", body: "payload" });
+  });
+
+  it("handles a response with no body", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(204);
+        res.end();
+      },
+      async (base) => {
+        const res = await rawRequest(`${base}/`);
+        expect(res.status).toBe(204);
+        expect(await res.text()).toBe("");
+      },
+    );
+  });
+
+  it("rejects when the connection fails", async () => {
+    await expect(rawRequest("http://127.0.0.1:1/")).rejects.toThrow();
   });
 });

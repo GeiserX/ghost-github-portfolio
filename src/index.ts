@@ -2,94 +2,113 @@
 
 import { Command } from "commander";
 import { writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { loadConfig, generateExampleConfig } from "./config.js";
-import { fetchRepos, detectBanner, fetchPortfolioConfig } from "./github.js";
+import {
+  fetchAllRepos,
+  selectRepos,
+  resolveBanner,
+  fetchPortfolioConfig,
+} from "./github.js";
 import { fetchPage, updatePage } from "./ghost.js";
-import { generateCard, generateFooter, buildLexical } from "./generator.js";
+import {
+  generateCard,
+  generatePortfolioHtml,
+  buildLexical,
+  buildPreviewPage,
+  wrapHtmlCard,
+} from "./generator.js";
+
+const { version } = createRequire(import.meta.url)("../package.json") as {
+  version: string;
+};
 
 const program = new Command();
 
 program
   .name("ghost-github-portfolio")
   .description(
-    "Auto-sync GitHub repositories to a Ghost CMS portfolio page. Fetches repos, sorts by stars, generates cards with banners and badges, and updates Ghost via the Admin API.",
+    "Write your most starred GitHub repositories to a Ghost page as a grid of cards, through the Ghost Admin API.",
   )
-  .version("0.3.5");
+  .version(version);
 
 program
   .command("sync")
   .description("Sync GitHub repos to your Ghost portfolio page")
   .requiredOption("-c, --config <path>", "Path to config YAML file")
-  .option("--dry-run", "Output generated HTML without updating Ghost")
-  .option("--json", "Output raw lexical JSON (implies --dry-run)")
+  .option("--dry-run", "Build the page without updating Ghost")
+  .option("--json", "Print the lexical JSON (implies --dry-run)")
+  .option(
+    "--html-out <file>",
+    "Write a standalone preview page of the card (implies --dry-run)",
+  )
   .option("-v, --verbose", "Show detailed progress")
   .action(async (opts) => {
     try {
       const config = loadConfig(opts.config);
       const verbose = opts.verbose || false;
-      const dryRun = opts.dryRun || opts.json || false;
+      const dryRun = opts.dryRun || opts.json || Boolean(opts.htmlOut);
 
-      // Fetch repos
       if (verbose)
         console.log(
           `Fetching repos for ${config.github.username} (min ${config.portfolio.minStars} stars)...`,
         );
-      const allRepos = await fetchRepos(config);
-
-      // Filter awesome lists for display only (stats use all repos)
-      const displayRepos = config.portfolio.excludeAwesomeLists
-        ? allRepos.filter((r) => !r.name.toLowerCase().startsWith("awesome") && !r.topics.includes("awesome-list"))
-        : allRepos;
+      const allRepos = await fetchAllRepos(config, verbose);
+      const repos = selectRepos(allRepos, config);
 
       console.log(
-        `Found ${allRepos.length} repos matching criteria (${config.portfolio.minStars}+ stars)${displayRepos.length < allRepos.length ? `, displaying ${displayRepos.length}` : ""}`,
+        `Found ${allRepos.length} public repos, showing ${repos.length}`,
       );
 
-      if (displayRepos.length === 0) {
+      if (repos.length === 0) {
         console.log("No repos found. Check your config.");
         return;
       }
 
-      // Detect banners (parallel)
-      if (verbose) console.log("Detecting banner images...");
-      const bannerResults = await Promise.all(
-        displayRepos.map(async (repo) => {
-          const banner = await detectBanner(repo, config);
-          if (verbose) {
-            console.log(
-              `  ${repo.name}: ${banner ? "found" : "no banner"}`,
-            );
-          }
-          return { repo, banner };
-        }),
-      );
-
-      // Fetch per-repo portfolio configs (.ghost-portfolio.yml)
+      // Per-repo .ghost-portfolio.yml: the file gives defaults, config.yml wins.
+      // Its description stands in for the GitHub one and is cleaned the same
+      // way; only a description in config.yml is used verbatim.
       if (verbose) console.log("Fetching portfolio configs...");
       await Promise.all(
-        displayRepos.map(async (repo) => {
-          const portfolioConfig = await fetchPortfolioConfig(repo, config);
-          if (portfolioConfig) {
-            // Merge: per-repo file provides defaults, config.yml overrides
-            const existing = config.portfolio.repos[repo.name] ?? {};
-            config.portfolio.repos[repo.name] = {
-              ...portfolioConfig,
-              ...Object.fromEntries(
-                Object.entries(existing).filter(([, v]) => v !== undefined),
-              ),
-            };
-            if (verbose) console.log(`  ${repo.name}: loaded .ghost-portfolio.yml`);
-          }
+        repos.map(async (repo) => {
+          const portfolioConfig = await fetchPortfolioConfig(repo);
+          if (!portfolioConfig) return;
+          const { description, ...fileOverrides } = portfolioConfig;
+          if (description) repo.description = description;
+          const existing = config.portfolio.repos[repo.name] ?? {};
+          config.portfolio.repos[repo.name] = {
+            ...Object.fromEntries(
+              Object.entries(fileOverrides).filter(([, v]) => v !== undefined),
+            ),
+            ...Object.fromEntries(
+              Object.entries(existing).filter(([, v]) => v !== undefined),
+            ),
+          };
+          if (verbose) console.log(`  ${repo.name}: loaded .ghost-portfolio.yml`);
         }),
       );
 
-      // Generate cards
-      const cards = bannerResults.map(({ repo, banner }) =>
-        generateCard(repo, banner, config),
+      if (verbose) console.log("Checking banners...");
+      const banners = await Promise.all(
+        repos.map((repo) => resolveBanner(repo, config)),
       );
+      repos.forEach((repo, i) => {
+        const { problems } = banners[i];
+        if (problems.length > 0) {
+          console.warn(
+            `Warning: ${repo.name} gets a name tile: ${problems.join("; ")}`,
+          );
+        }
+      });
 
-      const footer = generateFooter(allRepos, config);
-      const lexical = buildLexical(cards, footer);
+      const cards = repos.map((repo, i) =>
+        generateCard(repo, banners[i].url, config),
+      );
+      const html = generatePortfolioHtml(
+        { cards, totalRepos: allRepos.length },
+        config,
+      );
+      const lexical = buildLexical(html);
 
       if (opts.json) {
         console.log(JSON.stringify(lexical, null, 2));
@@ -97,43 +116,34 @@ program
       }
 
       if (dryRun) {
-        console.log("\n--- DRY RUN: Generated HTML ---\n");
-        for (const { repo, banner } of bannerResults) {
+        console.log("\n--- DRY RUN ---\n");
+        repos.forEach((repo, i) => {
           console.log(
-            `${repo.name} (${repo.stargazers_count} stars) ${banner ? "[banner]" : "[no banner]"}`,
+            `${repo.name} (${repo.stargazers_count} stars) ${banners[i].url ? "[banner]" : "[tile]"}`,
           );
-        }
+        });
         console.log(`\nTotal cards: ${cards.length}`);
-        console.log(
-          `Total stars: ${displayRepos.reduce((s, r) => s + r.stargazers_count, 0)}`,
-        );
 
-        // Write to temp file for inspection
-        const tmpPath = "/tmp/ghost-portfolio-preview.html";
-        const htmlPreview = cards.join("\n<br>\n");
-        writeFileSync(tmpPath, htmlPreview);
-        console.log(`\nPreview written to ${tmpPath}`);
+        const cardPath = "/tmp/ghost-portfolio-preview.html";
+        writeFileSync(cardPath, wrapHtmlCard(html));
+        console.log(`\nHtml card written to ${cardPath}`);
+        if (opts.htmlOut) {
+          writeFileSync(opts.htmlOut, buildPreviewPage(html));
+          console.log(`Preview page written to ${opts.htmlOut}`);
+        }
         return;
       }
 
-      // Fetch current page
       if (verbose) console.log("Fetching Ghost page...");
       const page = await fetchPage(config);
-      if (verbose)
-        console.log(`  Page: ${page.title} (${page.id})`);
+      if (verbose) console.log(`  Page: ${page.title} (${page.id})`);
 
-      // Update page
       if (verbose) console.log("Updating Ghost page...");
       const updated = await updatePage(config, page.id, page.updated_at, lexical);
 
       console.log(`Portfolio updated: ${updated.title}`);
-      console.log(`  ${displayRepos.length} projects displayed`);
-      console.log(
-        `  ${displayRepos.reduce((s, r) => s + r.stargazers_count, 0)} total stars`,
-      );
-      console.log(
-        `  ${bannerResults.filter((b) => b.banner).length} banners loaded`,
-      );
+      console.log(`  ${repos.length} projects displayed`);
+      console.log(`  ${banners.filter((b) => b.url).length} banners, ${banners.filter((b) => !b.url).length} tiles`);
     } catch (err) {
       console.error(
         `Error: ${err instanceof Error ? err.message : String(err)}`,

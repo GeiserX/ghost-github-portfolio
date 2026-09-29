@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import type { Config, LexicalDocument } from "./types.js";
-import { fetchWithRetry } from "./http.js";
+import { fetchWithRetry, rawRequest } from "./http.js";
 
 export function generateJwt(apiKey: string): string {
   const [keyId, secretHex] = apiKey.split(":");
@@ -33,12 +33,46 @@ export function generateJwt(apiKey: string): string {
   return `${header}.${payload}.${signature}`;
 }
 
-function ghostHeaders(apiKey: string): Record<string, string> {
-  return {
-    Authorization: `Ghost ${generateJwt(apiKey)}`,
+function ghostHeaders(config: Config): Record<string, string> {
+  const h: Record<string, string> = {
+    Authorization: `Ghost ${generateJwt(config.ghost.adminApiKey)}`,
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 ghost-github-portfolio",
   };
+  if (config.ghost.originUrl) {
+    const publicUrl = new URL(config.ghost.url);
+    h.Host = config.ghost.hostHeader || publicUrl.host;
+    h["X-Forwarded-Proto"] = "https";
+  }
+  return h;
+}
+
+/**
+ * Where Admin API requests go. Normally the public Ghost URL. With
+ * ghost.originUrl set they go straight to the origin (for example past a WAF
+ * that rejects page bodies containing <img>), carrying the public Host and
+ * X-Forwarded-Proto: https so Ghost answers as it would for the public site.
+ * The JWT audience stays /admin/ either way.
+ */
+export function adminUrl(config: Config, path: string): string {
+  const base = config.ghost.originUrl || config.ghost.url;
+  return `${base}/ghost/api/admin/${path}`;
+}
+
+/**
+ * Send an Admin API request. With originUrl set it goes through rawRequest,
+ * because the global fetch drops a custom Host header.
+ */
+function send(
+  config: Config,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetchWithRetry(
+    url,
+    { ...init, headers: ghostHeaders(config) },
+    config.ghost.originUrl ? { fetchImpl: rawRequest } : undefined,
+  );
 }
 
 interface GhostPage {
@@ -49,18 +83,12 @@ interface GhostPage {
 }
 
 export async function fetchPage(config: Config): Promise<GhostPage> {
-  const { url, adminApiKey, pageId, pageSlug } = config.ghost;
+  const { pageId, pageSlug } = config.ghost;
+  const endpoint = pageId
+    ? adminUrl(config, `pages/${pageId}/`)
+    : adminUrl(config, `pages/slug/${pageSlug}/`);
 
-  let endpoint: string;
-  if (pageId) {
-    endpoint = `${url}/ghost/api/admin/pages/${pageId}/`;
-  } else {
-    endpoint = `${url}/ghost/api/admin/pages/slug/${pageSlug}/`;
-  }
-
-  const res = await fetchWithRetry(endpoint, {
-    headers: ghostHeaders(adminApiKey),
-  });
+  const res = await send(config, endpoint);
 
   if (!res.ok) {
     const body = await res.text();
@@ -77,8 +105,7 @@ export async function updatePage(
   updatedAt: string,
   lexical: LexicalDocument,
 ): Promise<GhostPage> {
-  const { url, adminApiKey } = config.ghost;
-  const endpoint = `${url}/ghost/api/admin/pages/${pageId}/`;
+  const endpoint = adminUrl(config, `pages/${pageId}/`);
 
   const body = {
     pages: [
@@ -89,9 +116,8 @@ export async function updatePage(
     ],
   };
 
-  const res = await fetchWithRetry(endpoint, {
+  const res = await send(config, endpoint, {
     method: "PUT",
-    headers: ghostHeaders(adminApiKey),
     body: JSON.stringify(body),
   });
 
