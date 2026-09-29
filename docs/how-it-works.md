@@ -11,7 +11,7 @@ The page is one Ghost html card with its own scoped style. It holds a short intr
 
 The grid has three columns on desktop, two on tablets and one on phones. On themes built on Ghost's content grid, such as Alto, Source and Casper, the cards take the wide column and the text stays at reading width. The colours suit a dark theme.
 
-[preview-desktop.png](preview-desktop.png) shows a real run at 1280 px wide, and [preview-mobile.png](preview-mobile.png) the same page on a phone. [preview-config.yml](preview-config.yml) is the config behind them.
+[preview-desktop.png](images/screenshots/preview-desktop.png) shows a real run at 1280 px wide, and [preview-mobile.png](images/screenshots/preview-mobile.png) the same page on a phone. [preview-config.yml](preview-config.yml) is the config behind them.
 
 ## The sync steps
 
