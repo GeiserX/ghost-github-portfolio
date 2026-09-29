@@ -59,6 +59,14 @@ describe("loadConfig", () => {
     expect(config.ghost.adminApiKey).toBe("envkey:0011");
   });
 
+  it("rejects an originUrl without a scheme or with a non-http scheme", () => {
+    for (const bad of ["ghost:2368", "ftp://ghost:2368", "not a url"]) {
+      expect(() =>
+        load(VALID_CONFIG.replace("pageSlug: portfolio", `pageSlug: portfolio\n  originUrl: "${bad}"`)),
+      ).toThrow(/ghost\.originUrl/);
+    }
+  });
+
   it("reads originUrl and hostHeader, trimming the slash", () => {
     const config = load(
       VALID_CONFIG.replace(

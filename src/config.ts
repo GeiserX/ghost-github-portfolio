@@ -99,11 +99,25 @@ export function loadConfig(path: string): Config {
       adminApiKey: ghostKey,
       pageId: ghost.pageId as string | undefined,
       pageSlug: ghost.pageSlug as string | undefined,
-      originUrl: ghost.originUrl ? trimSlash(ghost.originUrl as string) : undefined,
+      originUrl: ghost.originUrl ? validateOriginUrl(ghost.originUrl as string) : undefined,
       hostHeader: ghost.hostHeader as string | undefined,
     },
     portfolio: merged,
   };
+}
+
+/** The origin route carries the Admin key in a JWT, so the scheme must be plain http: or https:. */
+function validateOriginUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("Config: ghost.originUrl must be a full URL such as http://ghost:2368");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Config: ghost.originUrl must start with http:// or https://");
+  }
+  return trimSlash(value);
 }
 
 export function generateExampleConfig(): string {
