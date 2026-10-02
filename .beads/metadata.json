@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "ghost_github_portfolio",
+  "project_id": "e960952f-adf7-44ea-818f-9c1ba90ab10c"
+}
