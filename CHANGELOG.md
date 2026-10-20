@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+### Security
+
+- The Docker image no longer trusts the eight eMudhra intermediates whose keys leaked: it upgrades Alpine's CA bundle to 20261020-r0 and runs Node with `--use-openssl-ca`, because Node's built-in roots still accept them. The npm package and the Action run on your own Node, which needs the same flag and a patched system bundle.
+
 ## 0.4.0
 
 ### Breaking

@@ -1,6 +1,6 @@
 {
   "name": "ghost-github-portfolio",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Write your most starred GitHub repositories to a Ghost page as a grid of cards, through the Ghost Admin API.",
   "type": "module",
   "bin": {
